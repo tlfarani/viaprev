@@ -43,7 +43,9 @@ with st.spinner("Carregando bases geográficas nacionais..."):
 # --- 2. FUNÇÕES AUXILIARES PARA PROCESSAMENTO DE REDE (GRAFOS) ---
 def extrair_grafo_ferroviario(gdf_ferrovia):
     """
-    Transforma as linhas do GeoDataFrame ferroviário em um Grafo do NetworkX.
+    Transforma as linhas do GeoDataFrame em um Grafo de Alta Densidade.
+    Conecta cada vértice sequencial da linha, permitindo precisão milimétrica 
+    no snapping de municípios ao longo do traçado.
     """
     G = nx.Graph()
     
@@ -62,12 +64,18 @@ def extrair_grafo_ferroviario(gdf_ferrovia):
             coords = list(linha.coords)
             if len(coords) < 2:
                 continue
-            no_inicial = coords[0]   
-            no_final = coords[-1]    
             
-            distancia_km = linha.length / 1000  
-            G.add_edge(no_inicial, no_final, weight=distancia_km, geometry=linha)
-            
+            # Percorre a linha vértice por vértice, criando micro-arestas ligadas
+            for i in range(len(coords) - 1):
+                no_u = coords[i]
+                no_v = coords[i+1]
+                
+                # Calcula a distância real em km entre esses dois vértices vizinhos
+                segmento = LineString([no_u, no_v])
+                distancia_km = segmento.length / 1000  
+                
+                G.add_edge(no_u, no_v, weight=distancia_km, geometry=segmento)
+                
     return G
 
 def encontrar_no_mais_proximo(grafo, ponto_cidade):
@@ -133,6 +141,14 @@ if st.sidebar.button("Calcular Rota e Dividir Trechos", use_container_width=True
             G = extrair_grafo_ferroviario(malha_m)
             no_origem = encontrar_no_mais_proximo(G, ponto_origem)
             no_destino = encontrar_no_mais_proximo(G, ponto_destino)
+            
+        # --- PAINEL DE DIAGNÓSTICO GEOGRÁFICO ---
+        with st.expander("🔍 Detalhes Técnicos de Atração (Snapping)"):
+            st.write(f"**Nós totais gerados na malha:** {len(G.nodes)}")
+            st.write(f"**Coordenada da Cidade de Origem:** ({ponto_origem.x:.1f}, {ponto_origem.y:.1f})")
+            st.write(f"**Nó ferroviário mais próximo da Origem:** ({no_origem[0]:.1f}, {no_origem[1]:.1f})")
+            st.write(f"**Coordenada da Cidade de Destino:** ({ponto_destino.x:.1f}, {ponto_destino.y:.1f})")
+            st.write(f"**Nó ferroviário mais próximo do Destino:** ({no_destino[0]:.1f}, {no_destino[1]:.1f})")
             
         # VALIDAÇÃO DE SEGURANÇA: Origem e Destino mapeados para o mesmo lugar
         if no_origem == no_destino:
