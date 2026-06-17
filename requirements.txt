@@ -1,7 +1,9 @@
 streamlit
 geopandas
 geobr
+pyarrow
 networkx
 folium
 streamlit-folium
 shapely
+rtree
