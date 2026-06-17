@@ -15,23 +15,22 @@ st.set_page_config(
 )
 
 st.title("🚊 Planejador Nacional de Vistoria Ferroviária (Rede/Grafos)")
-st.markdown("Ferramenta automatizada para traçado de rotas sobre trilhos e divisão de trechos operacionais diários.")
+st.markdown("Ferramenta otimizada para traçado de rotas sobre trilhos e divisão de trechos operacionais diários.")
 
 # --- 1. CARREGAMENTO DOS DADOS NACIONAIS ---
 @st.cache_data(show_spinner=False)
 def carregar_bases_nacionais():
     """
-    Carrega as sedes dos municípios via geobr e a malha ferroviária a partir do arquivo GeoParquet local.
+    Carrega as sedes dos municípios via geobr e a malha ferroviária em formato GeoParquet.
     """
     sedes_municipios = geobr.read_municipal_seat()
     
     try:
         malha_ferroviaria = gpd.read_parquet("dados/malha_ferroviaria.parquet")
-        # Força a definição do CRS caso o Parquet tenha subido sem ele
         if malha_ferroviaria.crs is None:
             malha_ferroviaria.set_crs(epsg=4326, inplace=True)
     except Exception:
-        st.sidebar.error("❌ Arquivo 'dados/malha_ferroviaria.parquet' não encontrado ou corrompido no repositório!")
+        st.sidebar.error("❌ Arquivo 'dados/malha_ferroviaria.parquet' não encontrado no repositório!")
         malha_ferroviaria = gpd.GeoDataFrame(geometry=[LineString([(0,0), (0,0)])], crs="EPSG:4326")
         
     return malha_ferroviaria, sedes_municipios
@@ -40,12 +39,11 @@ with st.spinner("Carregando bases geográficas nacionais..."):
     malha, sedes = carregar_bases_nacionais()
 
 
-# --- 2. FUNÇÕES AUXILIARES PARA PROCESSAMENTO DE REDE (GRAFOS) ---
+# --- 2. FUNÇÕES AUXILIARES DE ALTA PERFORMANCE (MATEMÁTICA PURA) ---
 def extrair_grafo_ferroviario(gdf_ferrovia):
     """
-    Transforma as linhas do GeoDataFrame em um Grafo de Alta Densidade.
-    Conecta cada vértice sequencial da linha, permitindo precisão milimétrica 
-    no snapping de municípios ao longo do traçado.
+    Transforma as linhas em Grafo usando matemática pura (Pitágoras).
+    Evita a criação de objetos Shapely dentro do loop, rodando instantaneamente.
     """
     G = nx.Graph()
     
@@ -65,27 +63,29 @@ def extrair_grafo_ferroviario(gdf_ferrovia):
             if len(coords) < 2:
                 continue
             
-            # Percorre a linha vértice por vértice, criando micro-arestas ligadas
+            # Varre os vértices usando estruturas nativas numéricas do Python
             for i in range(len(coords) - 1):
                 no_u = coords[i]
                 no_v = coords[i+1]
                 
-                # Calcula a distância real em km entre esses dois vértices vizinhos
-                segmento = LineString([no_u, no_v])
-                distancia_km = segmento.length / 1000  
+                # Geometria projetada em metros: Pitágoras puro para cálculo de distância
+                distancia_km = ((no_u[0] - no_v[0])**2 + (no_u[1] - no_v[1])**2)**0.5 / 1000
                 
-                G.add_edge(no_u, no_v, weight=distancia_km, geometry=segmento)
+                G.add_edge(no_u, no_v, weight=distancia_km)
                 
     return G
 
 def encontrar_no_mais_proximo(grafo, ponto_cidade):
     """
-    Encontra o nó da malha ferroviária mais próximo da sede do município.
+    Encontra o nó ferroviário (x, y) mais próximo usando busca matemática otimizada.
     """
     nos = list(grafo.nodes)
     if not nos:
         return (0, 0)
-    no_proximo = min(nos, key=lambda no: ponto_cidade.distance(LineString([ponto_cidade, no])))
+    
+    cx, cy = ponto_cidade.x, ponto_cidade.y
+    # Encontra o par ordenado que minimiza a distância euclidiana ao quadrado
+    no_proximo = min(nos, key=lambda no: (no[0] - cx)**2 + (no[1] - cy)**2)
     return no_proximo
 
 
@@ -137,20 +137,17 @@ if st.sidebar.button("Calcular Rota e Dividir Trechos", use_container_width=True
         ponto_origem = sedes_m[sedes_m['name_muni'] == muni_origem].geometry.values[0]
         ponto_destino = sedes_m[sedes_m['name_muni'] == muni_destino].geometry.values[0]
         
-        with st.spinner("Construindo rede lógica de grafos da malha..."):
+        with st.spinner("Construindo rede lógica de grafos da malha... (Modo Ultra Rápido)"):
             G = extrair_grafo_ferroviario(malha_m)
             no_origem = encontrar_no_mais_proximo(G, ponto_origem)
             no_destino = encontrar_no_mais_proximo(G, ponto_destino)
             
-        # --- PAINEL DE DIAGNÓSTICO GEOGRÁFICO ---
+        # Expander de Diagnóstico Técnico leve
         with st.expander("🔍 Detalhes Técnicos de Atração (Snapping)"):
-            st.write(f"**Nós totais gerados na malha:** {len(G.nodes)}")
-            st.write(f"**Coordenada da Cidade de Origem:** ({ponto_origem.x:.1f}, {ponto_origem.y:.1f})")
-            st.write(f"**Nó ferroviário mais próximo da Origem:** ({no_origem[0]:.1f}, {no_origem[1]:.1f})")
-            st.write(f"**Coordenada da Cidade de Destino:** ({ponto_destino.x:.1f}, {ponto_destino.y:.1f})")
-            st.write(f"**Nó ferroviário mais próximo do Destino:** ({no_destino[0]:.1f}, {no_destino[1]:.1f})")
+            st.write(f"**Nós gerados na malha:** {len(G.nodes)}")
+            st.write(f"**Nó mais próximo da Origem:** ({no_origem[0]:.1f}, {no_origem[1]:.1f})")
+            st.write(f"**Nó mais próximo do Destino:** ({no_destino[0]:.1f}, {no_destino[1]:.1f})")
             
-        # VALIDAÇÃO DE SEGURANÇA: Origem e Destino mapeados para o mesmo lugar
         if no_origem == no_destino:
             st.error(
                 f"⚠️ **Erro de Escala/Topologia:** O algoritmo mapeou a origem ({muni_origem}) e o destino ({muni_destino}) para o mesmo ponto físico da ferrovia.\n\n"
@@ -158,34 +155,14 @@ if st.sidebar.button("Calcular Rota e Dividir Trechos", use_container_width=True
             )
         else:
             try:
-                # Encontra o caminho mínimo de nós
+                # Calcula o caminho mínimo de nós sobre o grafo
                 caminho_nos = nx.shortest_path(G, source=no_origem, target=no_destino, weight='weight')
                 
-                # RECONSTRUÇÃO SEQUENCIAL MANUAL (Garante 100% que teremos uma LineString perfeita)
-                lista_pontos = []
-                comprimento_total_km = 0
+                # Como os nós são as próprias coordenadas (x,y), a rota é gerada de forma direta e ordenada
+                rota_unificada = LineString(caminho_nos)
                 
-                for u, v in zip(caminho_nos[:-1], caminho_nos[1:]):
-                    dados_aresta = G[u][v]
-                    linha_geom = dados_aresta['geometry']
-                    comprimento_total_km += dados_aresta['weight']
-                    
-                    # Alinha a orientação dos pontos para seguir o fluxo da viagem u -> v
-                    pt_inicial_linha = Point(linha_geom.coords[0])
-                    pt_no_u = Point(u)
-                    
-                    if pt_inicial_linha.distance(pt_no_u) > 1e-2:
-                        coords_segmento = list(linha_geom.coords)[::-1]  # Inverte orientação
-                    else:
-                        coords_segmento = list(linha_geom.coords)
-                    
-                    if lista_pontos:
-                        lista_pontos.extend(coords_segmento[1:])  # Evita duplicar o ponto de conexão
-                    else:
-                        lista_pontos.extend(coords_segmento)
-                
-                # Transforma os pontos encadeados diretamente em uma única LineString limpa
-                rota_unificada = LineString(lista_pontos)
+                # Calcula o comprimento total somando os pesos das arestas do caminho
+                comprimento_total_km = sum(G[caminho_nos[i]][caminho_nos[i+1]]['weight'] for i in range(len(caminho_nos)-1))
                 
                 st.success("Rota real mapeada com sucesso sobre os trilhos!")
                 
@@ -203,7 +180,6 @@ if st.sidebar.button("Calcular Rota e Dividir Trechos", use_container_width=True
                     inicio_m = i * tam_trecho_metros
                     fim_m = (i + 1) * tam_trecho_metros
                     
-                    # Corta o LineString de forma totalmente segura agora
                     sub_trecho_geom = substring(rota_unificada, inicio_m, fim_m)
                     
                     km_inicial = inicio_m / 1000
@@ -219,7 +195,7 @@ if st.sidebar.button("Calcular Rota e Dividir Trechos", use_container_width=True
                     })
                     
                 gdf_cronograma = gpd.GeoDataFrame(listagem_trechos_diarios, crs="EPSG:5880")
-                gdf_cronograma_wgs84 = gdf_cronograma.to_crs(epsg=4326)
+                gdf_cronograma_wgs84 = gpd.GeoDataFrame(gdf_cronograma, geometry=gdf_cronograma.geometry).to_crs(epsg=4326)
                 
                 # --- 6. CRIAÇÃO E EXIBIÇÃO DO MAPA INTERATIVO ---
                 st.write("---")
