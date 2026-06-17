@@ -17,18 +17,24 @@ st.set_page_config(
 st.title("🚊 Planejador Nacional de Vistoria Ferroviária (Rede/Grafos)")
 st.markdown("Ferramenta automatizada para traçado de rotas sobre trilhos e divisão de trechos operacionais diários.")
 
-# --- 1. CARREGAMENTO DOS DADOS NACIONAIS (COM CACHE) ---
+# --- 1. CARREGAMENTO DOS DADOS NACIONAIS (OTIMIZADO COM PARQUET) ---
 @st.cache_data(show_spinner=False)
 def carregar_bases_nacionais():
     """
-    Baixa e carrega as bases oficiais do IBGE/ANTT via biblioteca geobr.
+    Carrega as sedes dos municípios via geobr e a malha ferroviária em formato GeoParquet.
     """
-    malha_ferroviaria = geobr.read_railway()
+    # 1. Puxa as sedes dos municípios do IBGE
     sedes_municipios = geobr.read_municipal_seat()
+    
+    # 2. Carrega a malha ferroviária nacional em GeoParquet
+    try:
+        # Mudamos de read_file para read_parquet
+        malha_ferroviaria = gpd.read_parquet("dados/malha_ferroviaria.parquet")
+    except Exception:
+        st.sidebar.error("❌ Arquivo 'dados/malha_ferroviaria.parquet' não encontrado no repositório!")
+        malha_ferroviaria = gpd.GeoDataFrame(geometry=[LineString([(0,0), (0,0)])], crs="EPSG:4326")
+        
     return malha_ferroviaria, sedes_municipios
-
-with st.spinner("Carregando bases geográficas nacionais do IBGE... (Pode demorar um pouco na primeira execução)"):
-    malha, sedes = carregar_bases_nacionais()
 
 
 # --- 2. FUNÇÕES AUXILIARES PARA PROCESSAMENTO DE REDE (GRAFOS) ---
