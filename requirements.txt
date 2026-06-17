@@ -5,5 +5,3 @@ pyarrow
 networkx
 folium
 streamlit-folium
-shapely
-rtree
