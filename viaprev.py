@@ -1,5 +1,5 @@
 import streamlit as st
-import gpd = geopandas as gpd
+import geopandas as gpd
 import geopandas as gpd
 import geobr
 import networkx as nx
@@ -340,7 +340,7 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                     
                     # --- EXECUÇÃO CIRÚRGICA DA FILTRAGEM PURA DE GEOMETRIAS SÓLIDAS ---
                     passo_atual = "Executando Clipagem e Otimização da camada: Hidrografia (Rios)"
-                    rios_map = otimizar_camada_para_mapa(rios, corridor_seguro_wgs84, tipo_esperado="line")
+                    rios_map = otimizar_camada_para_mapa(rios, corredor_seguro_wgs84, tipo_esperado="line")
                     
                     passo_atual = "Executando Clipagem e Otimização da camada: Unidades de Conservação"
                     ucs_map = otimizar_camada_para_mapa(ucs, corredor_seguro_wgs84, tipo_esperado="polygon")
