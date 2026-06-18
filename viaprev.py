@@ -113,16 +113,33 @@ def otimizar_camada_para_mapa(gdf, corredor, tipo_esperado="polygon"):
 
 
 # --- 4. INTERFACE DO USUÁRIO ---
-st.sidebar.header("1. Origem e Destino (Interestadual)")
+st.sidebar.header("1. Roteiro de Fiscalização")
 lista_ufs = sorted(sedes['abbrev_state'].unique())
 
+# 4.1. Configuração da Partida
+st.sidebar.subheader("🛫 Ponto de Partida")
 uf_origem = st.sidebar.selectbox("UF de Partida:", lista_ufs, index=lista_ufs.index("SP") if "SP" in lista_ufs else 0)
 sedes_origem_df = sedes[sedes['abbrev_state'] == uf_origem].sort_values(by="name_muni")
 muni_origem = st.sidebar.selectbox("Município de Partida:", sedes_origem_df['name_muni'].unique(), index=0)
 
+# 4.2. Injeção Dinâmica de Paradas Intermediárias (Novidade)
+st.sidebar.subheader("📍 Paradas Intermediárias")
+num_paradas = st.sidebar.number_input("Quantidade de paradas adicionais:", min_value=0, max_value=6, value=0, step=1)
+listagem_paradas_gui = []
+
+for idx_p in range(int(num_paradas)):
+    st.sidebar.markdown(f"*📌 Configuração da Parada {idx_p + 1}*")
+    uf_p = st.sidebar.selectbox(f"UF da Parada {idx_p + 1}:", lista_ufs, index=lista_ufs.index("SP") if "SP" in lista_ufs else 0, key=f"uf_parada_{idx_p}")
+    sedes_p_df = sedes[sedes['abbrev_state'] == uf_p].sort_values(by="name_muni")
+    muni_p = st.sidebar.selectbox(f"Município da Parada {idx_p + 1}:", sedes_p_df['name_muni'].unique(), index=0, key=f"muni_parada_{idx_p}")
+    listagem_paradas_gui.append({"uf": uf_p, "muni": muni_p, "df_filtrado": sedes_p_df})
+
+# 4.3. Configuração do Destino
+st.sidebar.subheader("🛬 Ponto de Destino")
 uf_destino = st.sidebar.selectbox("UF de Destino:", lista_ufs, index=lista_ufs.index("SP") if "SP" in lista_ufs else 0)
 sedes_destino_df = sedes[sedes['abbrev_state'] == uf_destino].sort_values(by="name_muni")
 muni_destino = st.sidebar.selectbox("Município de Destino:", sedes_destino_df['name_muni'].unique(), index=min(1, len(sedes_destino_df)-1))
+
 
 st.sidebar.header("2.1. Controle de Concessionárias")
 if 'concessionaria' in malha.columns:
@@ -152,216 +169,244 @@ w_setores = st.sidebar.slider("👥 Adensamento / Censo", 1, 5, value=2)
 w_rios = st.sidebar.slider("💧 Hidrografia / Rios", 1, 5, value=2)
 
 
-# --- 5. MOTOR DE CÁLCULO E ANÁLISE MULTICRITÉRIO ---
+# --- 5. MOTOR DE CÁLCULO MULTI-PARADAS E ANÁLISE MULTICRITÉRIO ---
 if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=True):
     if len(malha) == 1 and malha.geometry.iloc[0].coords[0] == (0,0):
         st.error("A base ferroviária está ausente.")
     else:
         passo_atual = "Inicialização do botão de cálculo"
         
-        with st.spinner("Processando análises geoespaciais..."):
+        with st.spinner("Processando análises geoespaciais em rede..."):
             try:
                 passo_atual = "Filtragem da malha ferroviária por operadora"
                 malha_filtrada = malha.copy()
                 if concessionarias_selecionadas and col_concess_alvo:
                     malha_filtrada = malha_filtrada[malha_filtrada[col_concess_alvo].isin(concessionarias_selecionadas)]
                     
-                passo_atual = "Projeção da malha e das cidades para CRS Métrico (EPSG:5880)"
-                malha_m = malha_filtrada.to_crs(epsg=5880)
-                sedes_origem_m = sedes_origem_df.to_crs(epsg=5880)
-                sedes_destino_m = sedes_destino_df.to_crs(epsg=5880)
-                
-                ponto_origem = sedes_origem_m[sedes_origem_m['name_muni'] == muni_origem].geometry.values[0]
-                ponto_destino = sedes_destino_m[sedes_destino_m['name_muni'] == muni_destino].geometry.values[0]
-                
                 passo_atual = "Construção do Grafo Topológico (Nós e Arestas)"
-                G = extrair_grafo_ferroviario(malha_m)
+                G = extrair_grafo_ferroviario(malha_filtrada.to_crs(epsg=5880))
                 
-                passo_atual = "Atração espacial dos municípios para os nós técnicos do grafo"
-                no_origem = encontrar_no_mais_proximo(G, ponto_origem)
-                no_destino = encontrar_no_mais_proximo(G, ponto_destino)
+                passo_atual = "Estruturando fila ordenada de paradas do roteiro"
+                pontos_geometria = []
+                nomes_municipios = []
+                coords_wgs84_cidades = []
                 
-                if no_origem == no_destino:
-                    st.error("Origem e destino atraídos para o mesmo nó técnico.")
-                else:
-                    passo_atual = "Cálculo do Menor Caminho nos trilhos (NetworkX Shortest Path)"
-                    caminho_nos = nx.shortest_path(G, source=no_origem, target=no_destino, weight='weight')
-                    rota_unificada = LineString(caminho_nos)
-                    comprimento_total_km = sum(G[caminho_nos[i]][caminho_nos[i+1]]['weight'] for i in range(len(caminho_nos)-1))
+                # Injeta a Origem
+                p_orig = sedes_origem_df[sedes_origem_df['name_muni'] == muni_origem].geometry.values[0]
+                p_orig_wgs = sedes_origem_df[sedes_origem_df['name_muni'] == muni_origem].to_crs(epsg=4326).geometry.values[0]
+                pontos_geometria.append(p_orig)
+                nomes_municipios.append(muni_origem)
+                coords_wgs84_cidades.append((p_orig_wgs.y, p_orig_wgs.x))
+                
+                # Injeta as Paradas Intermediárias
+                for p_gui in listagem_paradas_gui:
+                    p_geom = p_gui["df_filtrado"][p_gui["df_filtrado"]['name_muni'] == p_gui["muni"]].geometry.values[0]
+                    p_wgs = p_gui["df_filtrado"][p_gui["df_filtrado"]['name_muni'] == p_gui["muni"]].to_crs(epsg=4326).geometry.values[0]
+                    pontos_geometria.append(p_geom)
+                    nomes_municipios.append(p_gui["muni"])
+                    coords_wgs84_cidades.append((p_wgs.y, p_wgs.x))
                     
-                    passo_atual = "Cálculo da BBox de abrangência da rota em WGS84"
-                    gdf_rota_temp = gpd.GeoDataFrame(geometry=[rota_unificada], crs="EPSG:5880").to_crs(epsg=4326)
-                    bbox_rota = gdf_rota_temp.geometry.iloc[0].bounds
-                    margin = 0.12
-                    bbox_expandida = (bbox_rota[0]-margin, bbox_rota[1]-margin, bbox_rota[2]+margin, bbox_rota[3]+margin)
+                # Injeta o Destino Final
+                p_dest = sedes_destino_df[sedes_destino_df['name_muni'] == muni_destino].geometry.values[0]
+                p_dest_wgs = sedes_destino_df[sedes_destino_df['name_muni'] == muni_destino].to_crs(epsg=4326).geometry.values[0]
+                pontos_geometria.append(p_dest)
+                nomes_municipios.append(muni_destino)
+                coords_wgs84_cidades.append((p_dest_wgs.y, p_dest_wgs.x))
+                
+                passo_atual = "Atração espacial das coordenadas urbanas para nós do grafo (EPSG:5880)"
+                gdf_pontos_m = gpd.GeoDataFrame(geometry=pontos_geometria, crs="EPSG:4326").to_crs(epsg=5880)
+                nos_cadeia_ferroviaria = [encontrar_no_mais_proximo(G, geom) for geom in gdf_pontos_m.geometry]
+                
+                passo_atual = "Processando o encadeamento consecutivo de Menor Caminho (Multi-leg routing)"
+                caminho_completo_nos = []
+                
+                for step in range(len(nos_cadeia_ferroviaria) - 1):
+                    no_start = nos_cadeia_ferroviaria[step]
+                    no_end = nos_cadeia_ferroviaria[step + 1]
                     
-                    passo_atual = "Carregamento das bases Parquet indexadas por BBox"
-                    ucs, log_uc = carregar_camada_com_telemetria("dados/unidades_conservacao.parquet", bbox_expandida, "Unidades de Conservação")
-                    tis, log_ti = carregar_camada_com_telemetria("dados/terras_indigenas.parquet", bbox_expandida, "Terras Indígenas")
-                    riscos, log_risco = carregar_camada_com_telemetria("dados/areas_risco.parquet", bbox_expandida, "Áreas de Risco (CPRM)")
-                    rios, log_rio = carregar_camada_com_telemetria("dados/hidrografia.parquet", bbox_expandida, "Hidrografia (Rios)")
-                    setores, log_setor = carregar_camada_com_telemetria("dados/setores_sp.parquet", bbox_expandida, "Setores Censitários (IBGE)")
-                    rodovias, log_rod = carregar_camada_com_telemetria("dados/rodovias.parquet", bbox_expandida, "Malha Rodoviária")
-                    patios, log_pat = carregar_camada_com_telemetria("dados/patios_oficinas.parquet", bbox_expandida, "Pátios e Oficinas")
+                    if no_start == no_end:
+                        continue # Pula se o usuário escolheu cidades adjacentes atraídas ao mesmo nó
+                        
+                    try:
+                        trecho_nos = nx.shortest_path(G, source=no_start, target=no_end, weight='weight')
+                        if not caminho_completo_nos:
+                            caminho_completo_nos.extend(trecho_nos)
+                        else:
+                            caminho_completo_nos.extend(trecho_nos[1:]) # Evita a duplicação do nó de junção
+                    except nx.NetworkXNoPath:
+                        raise nx.NetworkXNoPath(f"Sem conexão ferroviária contínua instalada entre os nós técnicos de '{nomes_municipios[step]}' e '{nomes_municipios[step+1]}'.")
+                
+                if not caminho_completo_nos:
+                    st.error("Erro topológico: Todos os pontos informados foram atraídos para um único nó no grafo.")
+                    st.stop()
                     
-                    painel_logs = [log_uc, log_ti, log_risco, log_rio, log_setor, log_rod, log_pat]
-                    soma_pesos = w_ti + w_risco + w_uc + w_setores + w_rios
+                rota_unificada = LineString(caminho_completo_nos)
+                comprimento_total_km = sum(G[caminho_completo_nos[i]][caminho_completo_nos[i+1]]['weight'] for i in range(len(caminho_completo_nos)-1))
+                
+                passo_atual = "Cálculo da BBox de abrangência expandida em WGS84"
+                gdf_rota_temp = gpd.GeoDataFrame(geometry=[rota_unificada], crs="EPSG:5880").to_crs(epsg=4326)
+                bbox_rota = gdf_rota_temp.geometry.iloc[0].bounds
+                margin = 0.15
+                bbox_expandida = (bbox_rota[0]-margin, bbox_rota[1]-margin, bbox_rota[2]+margin, bbox_rota[3]+margin)
+                
+                passo_atual = "Carregamento das camadas Parquet filtradas por BBox"
+                ucs, log_uc = carregar_camada_com_telemetria("dados/unidades_conservacao.parquet", bbox_expandida, "Unidades de Conservação")
+                tis, log_ti = carregar_camada_com_telemetria("dados/terras_indigenas.parquet", bbox_expandida, "Terras Indígenas")
+                riscos, log_risco = carregar_camada_com_telemetria("dados/areas_risco.parquet", bbox_expandida, "Áreas de Risco (CPRM)")
+                rios, log_rio = carregar_camada_com_telemetria("dados/hidrografia.parquet", bbox_expandida, "Hidrografia (Rios)")
+                setores, log_setor = carregar_camada_com_telemetria("dados/setores_sp.parquet", bbox_expandida, "Setores Censitários (IBGE)")
+                rodovias, log_rod = carregar_camada_com_telemetria("dados/rodovias.parquet", bbox_expandida, "Malha Rodoviária")
+                patios, log_pat = carregar_camada_com_telemetria("dados/patios_oficinas.parquet", bbox_expandida, "Pátios e Oficinas")
+                
+                painel_logs = [log_uc, log_ti, log_risco, log_rio, log_setor, log_rod, log_pat]
+                soma_pesos = w_ti + w_risco + w_uc + w_setores + w_rios
+                
+                passo_atual = "Clipagem estrita do Corredor Tático Macrorregional (1.5 km)"
+                gdf_corr_m = gpd.GeoDataFrame(geometry=[rota_unificada], crs="EPSG:5880")
+                corredor_seguro_wgs84 = gdf_corr_m.buffer(1500).to_crs(epsg=4326).unary_union
+                
+                passo_atual = "Início do fatiamento linear em trechos diários"
+                tam_trecho_metros = rota_unificada.length / num_trechos
+                listagem_trechos_diarios = []
+                todos_os_top_micros = []
+                
+                for i in range(num_trechos):
+                    passo_atual = f"Processando fatiamento e intersecções do Macro Trecho - Dia {i+1}"
+                    inicio_m = i * tam_trecho_metros
+                    fim_m = (i + 1) * tam_trecho_metros
+                    sub_trecho_geom = substring(rota_unificada, inicio_m, fim_m)
                     
-                    passo_atual = "Criação do buffer do Corredor Tático de 1.5 km para clipagem"
-                    gdf_corr_m = gpd.GeoDataFrame(geometry=[rota_unificada], crs="EPSG:5880")
-                    corredor_seguro_wgs84 = gdf_corr_m.buffer(1500).to_crs(epsg=4326).unary_union
+                    gdf_seg_m = gpd.GeoDataFrame(geometry=[sub_trecho_geom], crs="EPSG:5880")
+                    sub_trecho_wgs = gdf_seg_m.to_crs(epsg=4326).geometry.iloc[0]
+                    buffer_wgs = gdf_seg_m.buffer(200).to_crs(epsg=4326).iloc[0]
                     
-                    passo_atual = "Início do fatiamento em Macro Trechos Diários"
-                    tam_trecho_metros = rota_unificada.length / num_trechos
-                    listagem_trechos_diarios = []
-                    todos_os_top_micros = []
+                    hit_ucs = ucs[ucs.intersects(buffer_wgs)]['nome_uc'].unique().tolist() if not ucs.empty else []
+                    hit_tis = tis[tis.intersects(buffer_wgs)]['nome_ti'].unique().tolist() if not tis.empty else []
+                    hit_riscos = riscos[riscos.intersects(buffer_wgs)]['classe_risco'].unique().tolist() if not riscos.empty else []
+                    hit_rios = rios[rios.intersects(buffer_wgs)]['nome_rio'].unique().tolist() if not rios.empty else []
+                    count_setores = len(setores[setores.intersects(buffer_wgs)]) if not setores.empty else 0
                     
-                    for i in range(num_trechos):
-                        passo_atual = f"Fatiando e processando intersecções do Macro Trecho - Dia {i+1}"
-                        inicio_m = i * tam_trecho_metros
-                        fim_m = (i + 1) * tam_trecho_metros
-                        sub_trecho_geom = substring(rota_unificada, inicio_m, fim_m)
+                    hit_patios = patios[patios.intersects(buffer_wgs)] if not patios.empty else gpd.GeoDataFrame()
+                    nomes_patios = hit_patios['nome'].unique().tolist() if 'nome' in hit_patios.columns else []
+                    
+                    list_pn_coords, list_pontes_coords = [], []
+                    if not rodovias.empty:
+                        rod_hits = rodovias[rodovias.intersects(sub_trecho_wgs)]
+                        if not rod_hits.empty:
+                            for g in rod_hits.intersection(sub_trecho_wgs):
+                                if g.geom_type == 'Point': list_pn_coords.append((g.y, g.x))
+                                elif g.geom_type == 'MultiPoint': list_pn_coords.extend([(p.y, p.x) for p in g.geoms])
+                    if not rios.empty:
+                        rio_hits = rios[rios.intersects(sub_trecho_wgs)]
+                        if not rio_hits.empty:
+                            for g in rio_hits.intersection(sub_trecho_wgs):
+                                if g.geom_type == 'Point': list_pontes_coords.append((g.y, g.x))
+                                elif g.geom_type == 'MultiPoint': list_pontes_coords.extend([(p.y, p.x) for p in g.geoms])
+                    
+                    nota_ti = 10.0 if len(hit_tis) > 0 else 0.0
+                    nota_uc = 8.0 if len(hit_ucs) > 0 else 0.0
+                    nota_rio = 5.0 if len(hit_rios) > 0 else 0.0
+                    nota_risco = 10.0 if any("MUITO ALTO" in r for r in hit_riscos) else (6.0 if any("ALTO" in r for r in hit_riscos) else 0.0)
+                    nota_setor = 8.0 if count_setores > 25 else (4.0 if count_setores > 8 else 0.0)
+                    
+                    score_macro = ((nota_ti * w_ti) + (nota_risco * w_risco) + (nota_uc * w_uc) + (nota_setor * w_setores) + (nota_rio * w_rios)) / soma_pesos
+                    criticidade, cor = ("CRÍTICA", "red") if score_macro >= 4.5 else (("ALTA", "orange") if score_macro >= 2.5 else (("MÉDIA", "yellow") if score_macro >= 0.8 else ("BAIXA", "blue")))
+                    
+                    micro_start = inicio_m
+                    micro_chunks_dia = []
+                    
+                    while micro_start < fim_m:
+                        passo_atual = f"Fatiando e analisando Micro Hotspot de 1 km no Dia {i+1} (km {micro_start/1000:.1f})"
+                        micro_end = min(micro_start + 1000.0, fim_m)
+                        if (micro_end - micro_start) < 50.0: break
                         
-                        gdf_seg_m = gpd.GeoDataFrame(geometry=[sub_trecho_geom], crs="EPSG:5880")
-                        sub_trecho_wgs = gdf_seg_m.to_crs(epsg=4326).geometry.iloc[0]
-                        buffer_wgs = gdf_seg_m.buffer(200).to_crs(epsg=4326).iloc[0]
+                        micro_geom = substring(rota_unificada, micro_start, micro_end)
+                        gdf_micro_m = gpd.GeoDataFrame(geometry=[micro_geom], crs="EPSG:5880")
+                        m_buffer_wgs = gdf_micro_m.buffer(200).to_crs(epsg=4326).iloc[0]
                         
-                        hit_ucs = ucs[ucs.intersects(buffer_wgs)]['nome_uc'].unique().tolist() if not ucs.empty else []
-                        hit_tis = tis[tis.intersects(buffer_wgs)]['nome_ti'].unique().tolist() if not tis.empty else []
-                        hit_riscos = riscos[riscos.intersects(buffer_wgs)]['classe_risco'].unique().tolist() if not riscos.empty else []
-                        hit_rios = rios[rios.intersects(buffer_wgs)]['nome_rio'].unique().tolist() if not rios.empty else []
-                        count_setores = len(setores[setores.intersects(buffer_wgs)]) if not setores.empty else 0
+                        c_lista = list(micro_geom.coords)
+                        gdf_pts_micro = gpd.GeoDataFrame(geometry=[Point(c_lista[0]), Point(c_lista[-1])], crs="EPSG:5880").to_crs(epsg=4326)
+                        coords_str = f"Lat/Lon Inicial: [{gdf_pts_micro.geometry.iloc[0].y:.5f}, {gdf_pts_micro.geometry.iloc[0].x:.5f}] ➡️ Final: [{gdf_pts_micro.geometry.iloc[1].y:.5f}, {gdf_pts_micro.geometry.iloc[1].x:.5f}]"
                         
-                        hit_patios = patios[patios.intersects(buffer_wgs)] if not patios.empty else gpd.GeoDataFrame()
-                        col_nome_patio = [c for c in hit_patios.columns if 'nome' in c or 'patio' in c or 'oficina' in c]
-                        nomes_patios = hit_patios[col_nome_patio[0]].unique().tolist() if (not hit_patios.empty and col_nome_patio) else []
+                        m_ucs = ucs[ucs.intersects(m_buffer_wgs)]['nome_uc'].unique().tolist() if not ucs.empty else []
+                        m_tis = tis[tis.intersects(m_buffer_wgs)]['nome_ti'].unique().tolist() if not tis.empty else []
+                        m_riscos = riscos[riscos.intersects(m_buffer_wgs)]['classe_risco'].unique().tolist() if not riscos.empty else []
+                        m_rios = rios[rios.intersects(m_buffer_wgs)]['nome_rio'].unique().tolist() if not rios.empty else []
+                        m_setores = len(setores[setores.intersects(m_buffer_wgs)]) if not setores.empty else 0
                         
-                        list_pn_coords, list_pontes_coords = [], []
-                        if not rodovias.empty:
-                            rod_hits = rodovias[rodovias.intersects(sub_trecho_wgs)]
-                            if not rod_hits.empty:
-                                for g in rod_hits.intersection(sub_trecho_wgs):
-                                    if g.geom_type == 'Point': list_pn_coords.append((g.y, g.x))
-                                    elif g.geom_type == 'MultiPoint': list_pn_coords.extend([(p.y, p.x) for p in g.geoms])
-                        if not rios.empty:
-                            rio_hits = rios[rios.intersects(sub_trecho_wgs)]
-                            if not rio_hits.empty:
-                                for g in rio_hits.intersection(sub_trecho_wgs):
-                                    if g.geom_type == 'Point': list_pontes_coords.append((g.y, g.x))
-                                    elif g.geom_type == 'MultiPoint': list_pontes_coords.extend([(p.y, p.x) for p in g.geoms])
+                        m_n_ti = 10.0 if len(m_tis) > 0 else 0.0
+                        m_n_uc = 8.0 if len(m_ucs) > 0 else 0.0
+                        m_n_rio = 5.0 if len(m_rios) > 0 else 0.0
+                        m_n_risco = 10.0 if any("MUITO ALTO" in r for r in m_riscos) else (6.0 if any("ALTO" in r for r in m_riscos) else 0.0)
+                        m_n_setor = 8.0 if m_setores > 6 else (4.0 if m_setores > 2 else 0.0)
                         
-                        nota_ti = 10.0 if len(hit_tis) > 0 else 0.0
-                        nota_uc = 8.0 if len(hit_ucs) > 0 else 0.0
-                        nota_rio = 5.0 if len(hit_rios) > 0 else 0.0
-                        nota_risco = 10.0 if any("MUITO ALTO" in r for r in hit_riscos) else (6.0 if any("ALTO" in r for r in hit_riscos) else 0.0)
-                        nota_setor = 8.0 if count_setores > 25 else (4.0 if count_setores > 8 else 0.0)
+                        score_micro = ((m_n_ti * w_ti) + (m_n_risco * w_risco) + (m_n_uc * w_uc) + (m_n_setor * w_setores) + (m_n_rio * w_rios)) / soma_pesos
                         
-                        score_macro = ((nota_ti * w_ti) + (nota_risco * w_risco) + (nota_uc * w_uc) + (nota_setor * w_setores) + (nota_rio * w_rios)) / soma_pesos
-                        criticidade, cor = ("CRÍTICA", "red") if score_macro >= 4.5 else (("ALTA", "orange") if score_macro >= 2.5 else (("MÉDIA", "yellow") if score_macro >= 0.8 else ("BAIXA", "blue")))
+                        if m_ucs and m_riscos: resumo = f"🌳 UC: {m_ucs[0][:15]}... | ⚠️ Risco: {m_riscos[0]}"
+                        elif m_ucs: resumo = f"🌳 UC: {m_ucs[0][:25]}..."
+                        elif m_riscos: resumo = f"⚠️ Risco CPRM: {m_riscos[0]}"
+                        elif m_tis: resumo = f"🏹 TI: {m_tis[0][:25]}..."
+                        else: resumo = "Baixa interferência socioambiental direta nos trilhos"
                         
-                        micro_start = inicio_m
-                        micro_chunks_dia = []
-                        
-                        while micro_start < fim_m:
-                            passo_atual = f"Fatiando e analisando Micro Hotspot de 1 km no Dia {i+1} (km {micro_start/1000:.1f})"
-                            micro_end = min(micro_start + 1000.0, fim_m)
-                            if (micro_end - micro_start) < 50.0: break
-                            
-                            micro_geom = substring(rota_unificada, micro_start, micro_end)
-                            gdf_micro_m = gpd.GeoDataFrame(geometry=[micro_geom], crs="EPSG:5880")
-                            m_buffer_wgs = gdf_micro_m.buffer(200).to_crs(epsg=4326).iloc[0]
-                            
-                            c_lista = list(micro_geom.coords)
-                            gdf_pts_micro = gpd.GeoDataFrame(geometry=[Point(c_lista[0]), Point(c_lista[-1])], crs="EPSG:5880").to_crs(epsg=4326)
-                            coords_str = f"Lat/Lon Inicial: [{gdf_pts_micro.geometry.iloc[0].y:.5f}, {gdf_pts_micro.geometry.iloc[0].x:.5f}] ➡️ Final: [{gdf_pts_micro.geometry.iloc[1].y:.5f}, {gdf_pts_micro.geometry.iloc[1].x:.5f}]"
-                            
-                            m_ucs = ucs[ucs.intersects(m_buffer_wgs)]['nome_uc'].unique().tolist() if not ucs.empty else []
-                            m_tis = tis[tis.intersects(m_buffer_wgs)]['nome_ti'].unique().tolist() if not tis.empty else []
-                            m_riscos = riscos[riscos.intersects(m_buffer_wgs)]['classe_risco'].unique().tolist() if not riscos.empty else []
-                            m_rios = rios[rios.intersects(m_buffer_wgs)]['nome_rio'].unique().tolist() if not rios.empty else []
-                            m_setores = len(setores[setores.intersects(m_buffer_wgs)]) if not setores.empty else 0
-                            
-                            m_n_ti = 10.0 if len(m_tis) > 0 else 0.0
-                            m_n_uc = 8.0 if len(m_ucs) > 0 else 0.0
-                            m_n_rio = 5.0 if len(m_rios) > 0 else 0.0
-                            m_n_risco = 10.0 if any("MUITO ALTO" in r for r in m_riscos) else (6.0 if any("ALTO" in r for r in m_riscos) else 0.0)
-                            m_n_setor = 8.0 if m_setores > 6 else (4.0 if m_setores > 2 else 0.0)
-                            
-                            score_micro = ((m_n_ti * w_ti) + (m_n_risco * w_risco) + (m_n_uc * w_uc) + (m_n_setor * w_setores) + (m_n_rio * w_rios)) / soma_pesos
-                            
-                            if m_ucs and m_riscos: resumo = f"🌳 UC: {m_ucs[0][:15]}... | ⚠️ Risco: {m_riscos[0]}"
-                            elif m_ucs: resumo = f"🌳 UC: {m_ucs[0][:25]}..."
-                            elif m_riscos: resumo = f"⚠️ Risco CPRM: {m_riscos[0]}"
-                            elif m_tis: resumo = f"🏹 TI: {m_tis[0][:25]}..."
-                            else: resumo = "Baixa interferência socioambiental direta nos trilhos"
-                            
-                            micro_chunks_dia.append({
-                                'id_dia': f"Dia {i+1}", 'km_inicial': micro_start / 1000, 'km_final': micro_end / 1000,
-                                'score_num': score_micro, 'resumo_interf': resumo, 'coords_str': coords_str, 'geometry': micro_geom
-                            })
-                            micro_start += 1000.0
-                        
-                        top_5_do_dia = sorted(micro_chunks_dia, key=lambda x: x['score_num'], reverse=True)[:5]
-                        todos_os_top_micros.extend(top_5_do_dia)
-                        
-                        listagem_trechos_diarios.append({
-                            'id_dia': f"Dia {i+1}", 'km_inicial': inicio_m / 1000, 'km_final': fim_m / 1000, 'extensao': sub_trecho_geom.length / 1000,
-                            'criticidade': criticidade, 'score_num': score_macro, 'cor_rgb': cor,
-                            'interf_uc': ", ".join(hit_ucs) if hit_ucs else "Nenhuma",
-                            'interf_ti': ", ".join(hit_tis) if hit_tis else "Nenhuma",
-                            'interf_risco': ", ".join(hit_riscos) if hit_riscos else "Nenhum mapeado",
-                            'interf_rios': ", ".join(hit_rios) if hit_rios else "Nenhum grande rio",
-                            'interf_setores': f"{count_setores} setores urbanos cruzados",
-                            'interf_patios': ", ".join(nomes_patios) if nomes_patios else "Nenhum pátio na faixa de domínio",
-                            'pn_pontos': list_pn_coords, 'pontes_pontes': list_pontes_coords, 'geometry': sub_trecho_geom
+                        micro_chunks_dia.append({
+                            'id_dia': f"Dia {i+1}", 'km_inicial': micro_start / 1000, 'km_final': micro_end / 1000,
+                            'score_num': score_micro, 'resumo_interf': resumo, 'coords_str': coords_str, 'geometry': micro_geom
                         })
-                        
-                    passo_atual = "Fechamento das tabelas macro e micro em GeoDataFrames"
-                    gdf_cronograma = gpd.GeoDataFrame(listagem_trechos_diarios, crs="EPSG:5880")
-                    gdf_top_micros = gpd.GeoDataFrame(todos_os_top_micros, geometry='geometry', crs="EPSG:5880")
+                        micro_start += 1000.0
                     
-                    passo_atual = "Filtro e extração de coordenadas lat/lon dos Pátios de Apoio"
-                    if not patios.empty:
-                        patios_map = patios[patios.intersects(corredor_seguro_wgs84)].copy()
-                        if not patios_map.empty:
-                            patios_map['geometry'] = patios_map.geometry.centroid
-                            patios_map['lat'] = patios_map.geometry.y.round(5)
-                            patios_map['lon'] = patios_map.geometry.x.round(5)
-                            patios_map['nome_exibicao'] = patios_map['nome'].astype(str).str.strip().str.upper()
-                            patios_map['tipo_logistico'] = patios_map['tipo_logistico'].astype(str).str.strip()
-                    else:
-                        patios_map = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
+                    top_5_do_dia = sorted(micro_chunks_dia, key=lambda x: x['score_num'], reverse=True)[:5]
+                    todos_os_top_micros.extend(top_5_do_dia)
                     
-                    passo_atual = "Executando Clipagem e Otimização da camada: Hidrografia (Rios)"
-                    rios_map = otimizar_camada_para_mapa(rios, corredor_seguro_wgs84, tipo_esperado="line")
+                    listagem_trechos_diarios.append({
+                        'id_dia': f"Dia {i+1}", 'km_inicial': inicio_m / 1000, 'km_final': fim_m / 1000, 'extensao': sub_trecho_geom.length / 1000,
+                        'criticidade': criticidade, 'score_num': score_macro, 'cor_rgb': cor,
+                        'interf_uc': ", ".join(hit_ucs) if hit_ucs else "Nenhuma",
+                        'interf_ti': ", ".join(hit_tis) if hit_tis else "Nenhuma",
+                        'interf_risco': ", ".join(hit_riscos) if hit_riscos else "Nenhum mapeado",
+                        'interf_rios': ", ".join(hit_rios) if hit_rios else "Nenhum grande rio",
+                        'interf_setores': f"{count_setores} setores urbanos cruzados",
+                        'interf_patios': ", ".join(nomes_patios) if nomes_patios else "Nenhum pátio na faixa de domínio",
+                        'pn_pontos': list_pn_coords, 'pontes_pontes': list_pontes_coords, 'geometry': sub_trecho_geom
+                    })
                     
-                    passo_atual = "Executando Clipagem e Otimização da camada: Unidades de Conservação"
-                    ucs_map = otimizar_camada_para_mapa(ucs, corredor_seguro_wgs84, tipo_esperado="polygon")
-                    
-                    passo_atual = "Executando Clipagem e Otimização da camada: Terras Indígenas"
-                    tis_map = otimizar_camada_para_mapa(tis, corredor_seguro_wgs84, tipo_esperado="polygon")
-                    
-                    passo_atual = "Executando Clipagem e Otimização da camada: Áreas de Risco (CPRM)"
-                    riscos_map = otimizar_camada_para_mapa(riscos, corredor_seguro_wgs84, tipo_esperado="polygon")
-                    
-                    passo_atual = "Executando Clipagem e Otimização da camada: Malha Rodoviária"
-                    rodovias_map = otimizar_camada_para_mapa(rodovias, corredor_seguro_wgs84, tipo_esperado="line")
-                    
-                    passo_atual = "Salvando resultados consolidados no session_state do Streamlit"
-                    st.session_state.dados_calculados = {
-                        "muni_origem": muni_origem, "muni_destino": muni_destino,
-                        "uf_origem": uf_origem, "uf_destino": uf_destino,
-                        "bbox_rota": bbox_rota,
-                        "comprimento_total_km": comprimento_total_km, "num_trechos": num_trechos,
-                        "gdf_cronograma_wgs84": gdf_cronograma.to_crs(epsg=4326),
-                        "gdf_top_micros_wgs84": gdf_top_micros.to_crs(epsg=4326),
-                        "rios_wgs84": rios_map, "ucs_wgs84": ucs_map, "tis_wgs84": tis_map,
-                        "riscos_wgs84": riscos_map, "rodovias_wgs84": rodovias_map,
-                        "patios_wgs84": patios_map if not patios_map.empty else None,
-                        "logs_diagnostico": painel_logs
-                    }
-            except nx.NetworkXNoPath:
-                st.error("Sem conexão ferroviária contínua instalada entre as duas cidades.")
+                passo_atual = "Fechamento das tabelas macro e micro em GeoDataFrames"
+                gdf_cronograma = gpd.GeoDataFrame(listagem_trechos_diarios, crs="EPSG:5880")
+                gdf_top_micros = gpd.GeoDataFrame(todos_os_top_micros, geometry='geometry', crs="EPSG:5880")
+                
+                passo_atual = "Filtro e extração de coordenadas lat/lon dos Pátios de Apoio"
+                if not patios.empty:
+                    patios_map = patios[patios.intersects(corredor_seguro_wgs84)].copy()
+                    if not patios_map.empty:
+                        patios_map['geometry'] = patios_map.geometry.centroid
+                        patios_map['lat'] = patios_map.geometry.y.round(5)
+                        patios_map['lon'] = patios_map.geometry.x.round(5)
+                        patios_map['nome_exibicao'] = patios_map['nome'].astype(str).str.strip().str.upper()
+                        patios_map['tipo_logistico'] = patios_map['tipo_logistico'].astype(str).str.strip()
+                else:
+                    patios_map = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
+                
+                passo_atual = "Executando Clipagem e Otimização de camadas de apoio"
+                rios_map = otimizar_camada_para_mapa(rios, corredor_seguro_wgs84, tipo_esperado="line")
+                ucs_map = otimizar_camada_para_mapa(ucs, corredor_seguro_wgs84, tipo_esperado="polygon")
+                tis_map = otimizar_camada_para_mapa(tis, corredor_seguro_wgs84, tipo_esperado="polygon")
+                riscos_map = otimizar_camada_para_mapa(riscos, corredor_seguro_wgs84, tipo_esperado="polygon")
+                rodovias_map = otimizar_camada_para_mapa(rodovias, corredor_seguro_wgs84, tipo_esperado="line")
+                
+                passo_atual = "Salvando resultados consolidados no session_state do Streamlit"
+                st.session_state.dados_calculados = {
+                    "nomes_sequencia": nomes_municipios,
+                    "coords_cidades": coords_wgs84_cidades,
+                    "bbox_rota": bbox_rota,
+                    "comprimento_total_km": comprimento_total_km, "num_trechos": num_trechos,
+                    "gdf_cronograma_wgs84": gdf_cronograma.to_crs(epsg=4326),
+                    "gdf_top_micros_wgs84": gdf_top_micros.to_crs(epsg=4326),
+                    "rios_wgs84": rios_map, "ucs_wgs84": ucs_map, "tis_wgs84": tis_map,
+                    "riscos_wgs84": riscos_map, "rodovias_wgs84": rodovias_map,
+                    "patios_wgs84": patios_map if not patios_map.empty else None,
+                    "logs_diagnostico": painel_logs
+                }
+            except nx.NetworkXNoPath as erro_path:
+                st.error(f"❌ **Desconexão na Rede:** {erro_path}")
             except Exception as erro_interno:
                 st.error(f"❌ **O aplicativo falhou na execução de um passo geográfico!**")
                 st.error(f"📍 **Etapa da Falha:** `{passo_atual}`")
@@ -372,12 +417,14 @@ if st.session_state.dados_calculados is not None:
     dados = st.session_state.dados_calculados
     if "erro" in dados: st.error(dados["erro"])
     else:
-        st.subheader(f"📍 Rota Priorizada: {dados['muni_origem']} ({dados['uf_origem']}) ➡️ {dados['muni_destino']} ({dados['uf_destino']})")
-        st.success("Análise de hotspots de 1 km concluída com sucesso sobre a malha de grafos!")
+        # Formata o cabeçalho exibindo a sequência de paradas em formato textual limpo
+        texto_roteiro = " ➡️ ".join(dados['nomes_sequencia'])
+        st.subheader(f"📍 Roteiro Estabelecido: {texto_roteiro}")
+        st.success("Análise multicritério por encadeamento de grafos concluída com sucesso!")
         
         col1, col2 = st.columns(2)
-        col1.metric("Distância Total nos Trilhos", f"{dados['comprimento_total_km']:.2f} km")
-        col2.metric("Média de Deslocamento Diário", f"{(dados['comprimento_total_km'] / dados['num_trechos']):.2f} km/dia")
+        col1.metric("Distância Total da Malha de Vistoria", f"{dados['comprimento_total_km']:.2f} km")
+        col2.metric("Meta de Deslocamento Diário", f"{(dados['comprimento_total_km'] / dados['num_trechos']):.2f} km/dia")
         
         st.write("---")
         col_lista, col_mapa = st.columns([4, 5])
@@ -444,20 +491,15 @@ if st.session_state.dados_calculados is not None:
             if df_rodovias is not None and not df_rodovias.empty:
                 folium.GeoJson(df_rodovias, name="🛣️ Malha Rodoviária", show=False, style_function=lambda x: {'color': '#707070', 'weight': 1.2}).add_to(m)
             
-            # --- RENDERIZAÇÃO DE PRECISÃO: LOOP DE ICONES PARA ESTRUTURAS FERROVIÁRIAS ---
+            # --- LOOP DE ICONES DE ESTRUTURAS FERROVIÁRIAS (Do seu ETL Parquet) ---
             df_patios = dados.get("patios_wgs84")
             if df_patios is not None and not df_patios.empty:
                 group_patios = folium.FeatureGroup(name="🏢 Estruturas e Pátios Ferroviários", show=True)
                 for _, p_row in df_patios.iterrows():
                     tipo_log = p_row['tipo_logistico']
-                    
-                    # Chaveamento estético inteligente por Tipo Cadastrado no seu ETL
-                    if "Oficina" in tipo_log:
-                        v_icon, v_color = "wrench", "orange"
-                    elif "Terminal" in tipo_log:
-                        v_icon, v_color = "cubes", "purple"
-                    else:
-                        v_icon, v_color = "train", "blue"
+                    if "Oficina" in tipo_log: v_icon, v_color = "wrench", "orange"
+                    elif "Terminal" in tipo_log: v_icon, v_color = "cubes", "purple"
+                    else: v_icon, v_color = "train", "blue"
                         
                     texto_popup = f"""
                     <div style='font-family: Arial, sans-serif; font-size: 12px; min-width: 200px;'>
@@ -468,7 +510,6 @@ if st.session_state.dados_calculados is not None:
                         <b>🌐 Longitude:</b> {p_row['lon']}
                     </div>
                     """
-                    
                     folium.Marker(
                         location=[p_row['lat'], p_row['lon']],
                         popup=folium.Popup(texto_popup, max_width=320),
@@ -477,6 +518,17 @@ if st.session_state.dados_calculados is not None:
                     ).add_to(group_patios)
                 group_patios.add_to(m)
 
+            # --- PLOTAGEM DAS BANDEIRAS DOS MUNICÍPIOS DO ROTEIRO ---
+            for idx_pt, nome_pt in enumerate(dados["nomes_sequencia"]):
+                coord = dados["coords_cidades"][idx_pt]
+                if idx_pt == 0:
+                    folium.Marker(location=coord, tooltip=f"🛫 Origem: {nome_pt}", icon=folium.Icon(color="green", icon="play", prefix="fa")).add_to(m)
+                elif idx_pt == len(dados["nomes_sequencia"]) - 1:
+                    folium.Marker(location=coord, tooltip=f"🛬 Destino: {nome_pt}", icon=folium.Icon(color="red", icon="stop", prefix="fa")).add_to(m)
+                else:
+                    folium.Marker(location=coord, tooltip=f"📍 Parada {idx_pt}: {nome_pt}", icon=folium.Icon(color="blue", icon="flag", prefix="fa")).add_to(m)
+
+            # Desenho dos macro e micro trechos calculados
             for idx, row in gdf_wgs84.iterrows():
                 cor = row['cor_rgb']
                 folium.GeoJson(
