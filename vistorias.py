@@ -1,5 +1,5 @@
 import streamlit as st
-import geopandas as gpd  # Esta é a linha correta, a de cima foi removida!
+import geopandas as gpd
 import geobr
 import networkx as nx
 import folium
@@ -15,7 +15,7 @@ st.set_page_config(
     page_icon="🚊"
 )
 
-st.title("𚊊 Planejador de Vistoria Ferroviária com Matriz de Risco")
+st.title("🚊 Planejador de Vistoria Ferroviária com Matriz de Risco")
 st.markdown("Análise multicritério interestadual com identificação de Alvos Críticos de 1 km para vistoria in loco.")
 
 # --- 1. INICIALIZAÇÃO DA MEMÓRIA DO APP ---
@@ -181,7 +181,7 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                     
                     tam_trecho_metros = rota_unificada.length / num_trechos
                     listagem_trechos_diarios = []
-                    todos_os_top_micros = [] # Coleta global dos hotspots de 1km
+                    todos_os_top_micros = []
                     
                     for i in range(num_trechos):
                         inicio_m = i * tam_trecho_metros
@@ -227,13 +227,13 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                         score_macro = ((nota_ti * w_ti) + (nota_risco * w_risco) + (nota_uc * w_uc) + (nota_setor * w_setores) + (nota_rio * w_rios)) / soma_pesos
                         criticidade, cor = ("CRÍTICA", "red") if score_macro >= 4.5 else (("ALTA", "orange") if score_macro >= 2.5 else (("MÉDIA", "yellow") if score_macro >= 0.8 else ("BAIXA", "blue")))
                         
-                        # --- NOVO: LOOP INTERNO DE DETECÇÃO DE HOTSPOTS DE 1 KM ---
+                        # Loop de fatiamento interno de 1 km
                         micro_start = inicio_m
                         micro_chunks_dia = []
                         
                         while micro_start < fim_m:
                             micro_end = min(micro_start + 1000.0, fim_m)
-                            if (micro_end - micro_start) < 50.0: break # Ignora frações ínfimas na ponta final
+                            if (micro_end - micro_start) < 50.0: break
                             
                             micro_geom = substring(rota_unificada, micro_start, micro_end)
                             gdf_micro_m = gpd.GeoDataFrame(geometry=[micro_geom], crs="EPSG:5880")
@@ -249,7 +249,7 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                             m_n_uc = 8.0 if len(m_ucs) > 0 else 0.0
                             m_n_rio = 5.0 if len(m_rios) > 0 else 0.0
                             m_n_risco = 10.0 if any("MUITO ALTO" in r for r in m_riscos) else (6.0 if any("ALTO" in r for r in m_riscos) else 0.0)
-                            m_n_setor = 8.0 if m_setores > 6 else (4.0 if m_setores > 2 else 0.0) # Escala reduzida calibrada para 1km
+                            m_n_setor = 8.0 if m_setores > 6 else (4.0 if m_setores > 2 else 0.0)
                             
                             score_micro = ((m_n_ti * w_ti) + (m_n_risco * w_risco) + (m_n_uc * w_uc) + (m_n_setor * w_setores) + (m_n_rio * w_rios)) / soma_pesos
                             
@@ -263,7 +263,6 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                             })
                             micro_start += 1000.0
                         
-                        # Seleciona cirurgicamente os 5 trechos de 1km com maior Score no dia
                         top_5_do_dia = sorted(micro_chunks_dia, key=lambda x: x['score_num'], reverse=True)[:5]
                         todos_os_top_micros.extend(top_5_do_dia)
                         
@@ -280,7 +279,9 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                         })
                         
                     gdf_cronograma = gpd.GeoDataFrame(listagem_trechos_diarios, crs="EPSG:5880")
-                    gdf_top_micros = gpd.GeoDataFrame(todos_os_top_micros, crs="EPSG:5880")
+                    
+                    # BLINDAGEM ADICIONAL: Definição clara da coluna geométrica ativa
+                    gdf_top_micros = gpd.GeoDataFrame(todos_os_top_micros, geometry='geometry', crs="EPSG:5880")
                     
                     st.session_state.dados_calculados = {
                         "muni_origem": muni_origem, "muni_destino": muni_destino,
@@ -312,13 +313,21 @@ if st.session_state.dados_calculados is not None:
         col1.metric("Distância Total nos Trilhos", f"{dados['comprimento_total_km']:.2f} km")
         col2.metric("Média de Deslocamento Diário", f"{(dados['comprimento_total_km'] / dados['num_trechos']):.2f} km/dia")
         
+        if "logs_diagnostico" in dados:
+            with st.expander("🛠️ Painel de Diagnóstico e Logs de Leitura Geográfica"):
+                st.markdown("Verifique abaixo o comportamento de carregamento das camadas geográficas Parquet:")
+                for log in dados["logs_diagnostico"]:
+                    st.markdown(f"**🔹 Camada:** {log['camada']} | **Status:** {log['status']} | **Feições na Rota:** `{log['registros']}`")
+        
         st.write("---")
         col_lista, col_mapa = st.columns([4, 5])
         
         with col_lista:
             st.write("### 🗓️ Matriz de Sensibilidade e Alvos de Fiscalização")
             gdf_wgs84 = dados['gdf_cronograma_wgs84']
-            gdf_micros_wgs84 = dados['gdf_top_micros_wgs84']
+            
+            # BLINDAGEM CONTRA CACHE VELHO: Captura de forma segura a nova camada usando .get()
+            gdf_micros_wgs84 = dados.get('gdf_top_micros_wgs84', None)
             
             for idx, row in gdf_wgs84.iterrows():
                 texto_trecho = f"**{row['id_dia']}:** km {row['km_inicial']:.1f} ao {row['km_final']:.1f} ({row['extensao']:.1f} km) — **Score: {row['score_num']:.2f}**"
@@ -328,11 +337,14 @@ if st.session_state.dados_calculados is not None:
                 else: st.success(f"🔵 {texto_trecho}")
                 
                 with st.expander("Ver Cruzamentos e Hotspots de 1 km (Alvos In Loco)"):
-                    st.markdown("🎯 **Top 5 Trechos de 1 km mais Sensíveis para Vistoria Prática:**")
-                    micros_do_dia = gdf_micros_wgs84[gdf_micros_wgs84['id_dia'] == row['id_dia']]
-                    
-                    for m_idx, m_row in micros_do_dia.iterrows():
-                        st.markdown(f"   • 📍 **km {m_row['km_inicial']:.1f} ao {m_row['km_final']:.1f}** — Score: `{m_row['score_num']:.2f}` ({m_row['resumo_interf']})")
+                    # Executa a listagem fina se os dados novos existirem em memória
+                    if gdf_micros_wgs84 is not None and not gdf_micros_wgs84.empty:
+                        st.markdown("🎯 **Top 5 Trechos de 1 km mais Sensíveis para Vistoria Prática:**")
+                        micros_do_dia = gdf_micros_wgs84[gdf_micros_wgs84['id_dia'] == row['id_dia']]
+                        for m_idx, m_row in micros_do_dia.iterrows():
+                            st.markdown(f"   • 📍 **km {m_row['km_inicial']:.1f} ao {m_row['km_final']:.1f}** — Score: `{m_row['score_num']:.2f}` ({m_row['resumo_interf']})")
+                    else:
+                        st.caption("⚠️ Alvos de 1km indisponíveis na memória residual. Clique em 'Calcular Rota' para gerar os novos hotspots.")
                     
                     st.write("---")
                     st.markdown(f"🛣️ **Passagens de Nível:** `{len(row['pn_pontos'])}` | 🌉 **Pontes sobre Rios:** `{len(row['pontes_pontes'])}`")
@@ -346,7 +358,6 @@ if st.session_state.dados_calculados is not None:
             
             m.add_child(folium.LatLngPopup())
             
-            # Desenha as camadas base do Parquet em segundo plano (Toggles)
             if dados.get("rios_wgs84") is not None and not dados["rios_wgs84"].empty:
                 folium.GeoJson(dados["rios_wgs84"], name="💧 Hidrografia (Parquet)", show=True, style_function=lambda x: {'color': '#1d70b8', 'weight': 2}).add_to(m)
             if dados.get("ucs_wgs84") is not None and not dados["ucs_wgs84"].empty:
@@ -356,7 +367,7 @@ if st.session_state.dados_calculados is not None:
             if dados.get("rodovias_wgs84") is not None and not dados["rodovias_wgs84"].empty:
                 folium.GeoJson(dados["rodovias_wgs84"], name="🛣️ Malha Rodoviária", show=False, style_function=lambda x: {'color': '#707070', 'weight': 1.2}).add_to(m)
 
-            # 1. Desenha a linha de base da ferrovia fatiada por dia
+            # 1. Linhas de base por dia
             for idx, row in gdf_wgs84.iterrows():
                 cor = row['cor_rgb']
                 folium.GeoJson(
@@ -364,21 +375,20 @@ if st.session_state.dados_calculados is not None:
                     style_function=lambda x, c=cor: {'color': c, 'weight': 5, 'opacity': 0.8}
                 ).add_to(m)
                 
-                # Símbolos de Infraestrutura
                 for pt in row['pn_pontos']:
                     folium.CircleMarker(location=pt, radius=4, color='black', fill=True, fill_color='orange', popup="🛣️ Passagem de Nível").add_to(m)
                 for pt_rio in row['pontes_pontes']:
                     folium.CircleMarker(location=pt_rio, radius=4, color='darkblue', fill=True, fill_color='cyan', popup="🌉 Ponte Ferroviária").add_to(m)
             
-            # 2. NOVO: DESENHA OS ALVOS DE 1 KM COM DESTAQUE MÁXIMO EM MAGENTA
-            if dados.get("gdf_top_micros_wgs84") is not None:
+            # 2. BLINDAGEM DE EXIBIÇÃO: Desenha os alvos neon apenas se presentes
+            if gdf_micros_wgs84 is not None and not gdf_micros_wgs84.empty:
                 folium.GeoJson(
-                    dados["gdf_top_micros_wgs84"],
+                    gdf_micros_wgs84,
                     name="🎯 Alvos Críticos de Vistoria (1 km)",
                     show=True,
                     style_function=lambda x: {
-                        'color': '#ff007f',    # Magenta Neon / Rosa Choque
-                        'weight': 10,           # Linha muito espessa para sobressair
+                        'color': '#ff007f',
+                        'weight': 10,
                         'opacity': 0.95
                     },
                     tooltip=folium.GeoJsonTooltip(fields=['id_dia', 'km_inicial', 'km_final', 'score_num'], aliases=['Dia: ', 'km Inicial: ', 'km Final: ', 'Score do Alvo: '])
