@@ -1,6 +1,5 @@
 import streamlit as st
 import geopandas as gpd
-import geopandas as gpd
 import geobr
 import networkx as nx
 import folium
@@ -13,10 +12,10 @@ import os
 st.set_page_config(
     layout="wide", 
     page_title="ViaPrev: Planejador Nacional de Vistoria Ferroviária",
-    page_icon="🚊"
+    page_icon="𚊊"
 )
 
-st.title("🚊 ViaPrev: Planejador de Vistoria Ferroviária com Matriz de Risco")
+st.title("𚊊 ViaPrev: Planejador de Vistoria Ferroviária com Matriz de Risco")
 st.markdown("Análise multicritério interestadual com identificação de Alvos Críticos de 1 km para vistoria in loco.")
 
 # --- 1. INICIALIZAÇÃO DA MEMÓRIA DO APP ---
@@ -92,20 +91,16 @@ def carregar_camada_com_telemetria(caminho_parquet, bbox_wgs84, nome_camada):
             log["status"] = "🔴 Falha Crítica"
             return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326"), log
 
-# --- FUNÇÃO DE INTELIGÊNCIA GEOGRÁFICA REVISADA: Purifica tipos primitivos puros ---
 def otimizar_camada_para_mapa(gdf, corredor, tipo_esperado="polygon"):
     if gdf is None or gdf.empty:
         return None
-    # 1. Filtro rápido de intersecção por proximidade
     sub_gdf = gdf[gdf.intersects(corredor)].copy()
     if sub_gdf.empty:
         return None
-    # 2. Recorte rígido no limite do corredor para emagrecer o payload
     sub_gdf['geometry'] = sub_gdf.geometry.intersection(corredor)
     sub_gdf['geometry'] = sub_gdf.geometry.make_valid()
     sub_gdf = sub_gdf[~sub_gdf.geometry.is_empty]
     
-    # 3. Purificação estrita de feições (Bane GeometryCollections mistas que quebram o Leaflet)
     if tipo_esperado == "polygon":
         sub_gdf = sub_gdf[sub_gdf.geometry.type.isin(['Polygon', 'MultiPolygon'])]
     elif tipo_esperado == "line":
@@ -113,7 +108,6 @@ def otimizar_camada_para_mapa(gdf, corredor, tipo_esperado="polygon"):
         
     if sub_gdf.empty:
         return None
-    # 4. Simplificação de nós topológicos redundantes
     sub_gdf['geometry'] = sub_gdf.geometry.simplify(0.0003, preserve_topology=True)
     return sub_gdf if not sub_gdf.empty else None
 
@@ -333,12 +327,11 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                             patios_map['geometry'] = patios_map.geometry.centroid
                             patios_map['lat'] = patios_map.geometry.y.round(5)
                             patios_map['lon'] = patios_map.geometry.x.round(5)
-                            col_nome_temp = [c for c in patios_map.columns if 'nome' in c or 'patio' in c or 'oficina' in c]
-                            patios_map['nome_exibicao'] = patios_map[col_nome_temp[0]].astype(str).str.strip().str.upper() if col_nome_temp else "ESTRUTURA FERROVIÁRIA"
+                            patios_map['nome_exibicao'] = patios_map['nome'].astype(str).str.strip().str.upper()
+                            patios_map['tipo_logistico'] = patios_map['tipo_logistico'].astype(str).str.strip()
                     else:
                         patios_map = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
                     
-                    # --- EXECUÇÃO CIRÚRGICA DA FILTRAGEM PURA DE GEOMETRIAS SÓLIDAS ---
                     passo_atual = "Executando Clipagem e Otimização da camada: Hidrografia (Rios)"
                     rios_map = otimizar_camada_para_mapa(rios, corredor_seguro_wgs84, tipo_esperado="line")
                     
@@ -451,14 +444,38 @@ if st.session_state.dados_calculados is not None:
             if df_rodovias is not None and not df_rodovias.empty:
                 folium.GeoJson(df_rodovias, name="🛣️ Malha Rodoviária", show=False, style_function=lambda x: {'color': '#707070', 'weight': 1.2}).add_to(m)
             
+            # --- RENDERIZAÇÃO DE PRECISÃO: LOOP DE ICONES PARA ESTRUTURAS FERROVIÁRIAS ---
             df_patios = dados.get("patios_wgs84")
             if df_patios is not None and not df_patios.empty:
-                folium.GeoJson(
-                    df_patios, name="🏢 Estruturas e Pátios Ferroviários", show=True,
-                    style_function=lambda x: {'color': 'black', 'fillColor': 'gray', 'fillOpacity': 0.6, 'weight': 1.5},
-                    tooltip=folium.GeoJsonTooltip(fields=['nome_exibicao', 'lat', 'lon'], aliases=['Estrutura: ', 'Lat: ', 'Lon: ']),
-                    popup=folium.GeoJsonPopup(fields=['nome_exibicao', 'lat', 'lon'], aliases=['Estrutura: ', 'Lat: ', 'Lon: '])
-                ).add_to(m)
+                group_patios = folium.FeatureGroup(name="🏢 Estruturas e Pátios Ferroviários", show=True)
+                for _, p_row in df_patios.iterrows():
+                    tipo_log = p_row['tipo_logistico']
+                    
+                    # Chaveamento estético inteligente por Tipo Cadastrado no seu ETL
+                    if "Oficina" in tipo_log:
+                        v_icon, v_color = "wrench", "orange"
+                    elif "Terminal" in tipo_log:
+                        v_icon, v_color = "cubes", "purple"
+                    else:
+                        v_icon, v_color = "train", "blue"
+                        
+                    texto_popup = f"""
+                    <div style='font-family: Arial, sans-serif; font-size: 12px; min-width: 200px;'>
+                        <h4 style='margin:0 0 5px 0; color:#333;'>🏢 {p_row['nome_exibicao']}</h4>
+                        <hr style='margin:5px 0; border:0; border-top:1px solid #ccc;'>
+                        <b>📌 Classificação:</b> {tipo_log}<br>
+                        <b>🌐 Latitude:</b> {p_row['lat']}<br>
+                        <b>🌐 Longitude:</b> {p_row['lon']}
+                    </div>
+                    """
+                    
+                    folium.Marker(
+                        location=[p_row['lat'], p_row['lon']],
+                        popup=folium.Popup(texto_popup, max_width=320),
+                        tooltip=f"🏢 {p_row['nome_exibicao']} ({tipo_log})",
+                        icon=folium.Icon(color=v_color, icon=v_icon, prefix="fa")
+                    ).add_to(group_patios)
+                group_patios.add_to(m)
 
             for idx, row in gdf_wgs84.iterrows():
                 cor = row['cor_rgb']
