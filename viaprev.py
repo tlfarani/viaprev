@@ -299,8 +299,6 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                         patios['nome_exibicao'] = patios[col_nome_temp[0]].astype(str).str.strip().str.upper() if col_nome_temp else "ESTRUTURA FERROVIÁRIA"
                     
                     st.session_state.dados_calculados = {
-                    
-                    st.session_state.dados_calculados = {
                         "muni_origem": muni_origem, "muni_destino": muni_destino,
                         "uf_origem": uf_origem, "uf_destino": uf_destino,
                         "comprimento_total_km": comprimento_total_km, "num_trechos": num_trechos,
