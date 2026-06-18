@@ -324,7 +324,7 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                         patios_map = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
                     
                     passo_atual = "Executando Clipagem e Otimização da camada: Hidrografia (Rios)"
-                    rios_map = otimizar_camada_para_mapa(rios, corredor_seguro_wgs84)
+                    rios_map = otimizar_camada_para_mapa(rios, corridor_seguro_wgs84)
                     
                     passo_atual = "Executando Clipagem e Otimização da camada: Unidades de Conservação"
                     ucs_map = otimizar_camada_para_mapa(ucs, corredor_seguro_wgs84)
@@ -351,9 +351,8 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                         "patios_wgs84": patios_map if not patios_map.empty else None,
                         "logs_diagnostico": painel_logs
                     }
-                except nx.NetworkXNoPath:
-                    st.error("Sem conexão ferroviária contínua instalada entre as duas cidades.")
-            
+            except nx.NetworkXNoPath:
+                st.error("Sem conexão ferroviária contínua instalada entre as duas cidades.")
             except Exception as erro_interno:
                 st.error(f"❌ **O aplicativo falhou na execução de um passo geográfico!**")
                 st.error(f"📍 **Etapa da Falha:** `{passo_atual}`")
