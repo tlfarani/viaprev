@@ -116,12 +116,20 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                     rota_unificada = LineString(caminho_nos)
                     comprimento_total_km = sum(G[caminho_nos[i]][caminho_nos[i+1]]['weight'] for i in range(len(caminho_nos)-1))
                     
-                    # Extração espacial inteligente por BBox
+                    # Extração espacial: Captura os limites da rota em WGS84
                     gdf_rota_temp = gpd.GeoDataFrame(geometry=[rota_unificada], crs="EPSG:5880").to_crs(epsg=4326)
                     bbox_rota = gdf_rota_temp.geometry.iloc[0].bounds
-                    margin = 0.08
-                    bbox_expandida = box(bbox_rota[0]-margin, bbox_rota[1]-margin, bbox_rota[2]+margin, bbox_rota[3]+margin)
+                    margin = 0.08 # Margem de folga geográfica (~8km)
                     
+                    # CORREÇÃO: bbox_expandida agora é uma tupla de 4 floats, não um objeto box()
+                    bbox_expandida = (
+                        bbox_rota[0] - margin, # minx
+                        bbox_rota[1] - margin, # miny
+                        bbox_rota[2] + margin, # maxx
+                        bbox_rota[3] + margin  # maxy
+                    )
+                    
+                    # Carregamento cirúrgico e direcionado usando a tupla corrigida
                     ucs = carregar_camada_recortada("dados/unidades_conservacao.parquet", bbox_expandida)
                     tis = carregar_camada_recortada("dados/terras_indigenas.parquet", bbox_expandida)
                     riscos = carregar_camada_recortada("dados/areas_risco.parquet", bbox_expandida)
@@ -139,29 +147,27 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                         gdf_seg_m = gpd.GeoDataFrame(geometry=[sub_trecho_geom], crs="EPSG:5880")
                         buffer_wgs = gdf_seg_m.buffer(200).to_crs(epsg=4326).iloc[0]
                         
-                        # Captura de cruzamentos brutos
+                        # Captura de intersecções reais com as camadas recortadas
                         hit_ucs = ucs[ucs.intersects(buffer_wgs)]['nome_uc'].unique().tolist() if not ucs.empty else []
                         hit_tis = tis[tis.intersects(buffer_wgs)]['nome_ti'].unique().tolist() if not tis.empty else []
                         hit_riscos = riscos[riscos.intersects(buffer_wgs)]['classe_risco'].unique().tolist() if not riscos.empty else []
                         hit_rios = rios[rios.intersects(buffer_wgs)]['nome_rio'].unique().tolist() if not rios.empty else []
                         count_setores = len(setores[setores.intersects(buffer_wgs)]) if not setores.empty else 0
                         
-                        # --- CÁLCULO DAS NOTAS CRITÉRIO (0 a 10) ---
+                        # --- MATRIZ MULTICRITÉRIO (Notas de 0 a 10) ---
                         nota_ti = 10.0 if len(hit_tis) > 0 else 0.0
                         nota_uc = 8.0 if len(hit_ucs) > 0 else 0.0
                         nota_rio = 5.0 if len(hit_rios) > 0 else 0.0
                         
-                        # Escalonamento para Riscos Geológicos
                         if any("MUITO ALTO" in r for r in hit_riscos): nota_risco = 10.0
                         elif any("ALTO" in r for r in hit_riscos): nota_risco = 6.0
                         else: nota_risco = 0.0
                             
-                        # Escalonamento para Setores Urbanos (IBGE)
                         if count_setores > 15: nota_setor = 8.0
                         elif count_setores > 5: nota_setor = 4.0
                         else: nota_setor = 0.0
                         
-                        # --- EQUAÇÃO DA COMBINAÇÃO LINEAR PONDERADA ---
+                        # Cálculo ponderado escalonado pelos Sliders da interface
                         soma_pesos = w_ti + w_risco + w_uc + w_setores + w_rios
                         score_final = (
                             (nota_ti * w_ti) + 
@@ -171,15 +177,11 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                             (nota_rio * w_rios)
                         ) / soma_pesos
                         
-                        # --- CLASSIFICAÇÃO DOS ENVELOPES DE SENSIBILIDADE ---
-                        if score_final >= 5.0:
-                            criticidade, cor = "CRÍTICA", "red"
-                        elif score_final >= 3.0:
-                            criticidade, cor = "ALTA", "orange"
-                        elif score_final >= 1.0:
-                            criticidade, cor = "MÉDIA", "yellow"
-                        else:
-                            criticidade, cor = "BAIXA", "blue"
+                        # Classificação fina dos envelopes de risco
+                        if score_final >= 4.5: criticidade, cor = "CRÍTICA", "red"
+                        elif score_final >= 2.5: criticidade, cor = "ALTA", "orange"
+                        elif score_final >= 0.8: criticidade, cor = "MÉDIA", "yellow"
+                        else: criticidade, cor = "BAIXA", "blue"
                             
                         listagem_trechos_diarios.append({
                             'id_dia': f"Dia {i+1}",
