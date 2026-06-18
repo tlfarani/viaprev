@@ -148,36 +148,46 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
     if len(malha) == 1 and malha.geometry.iloc[0].coords[0] == (0,0):
         st.error("A base ferroviária está ausente.")
     else:
-        with st.spinner("Traçando rota interestadual e calculando cruzamentos estruturais de precisão..."):
-            
-            malha_filtrada = malha.copy()
-            if concessionarias_selecionadas and col_concess_alvo:
-                malha_filtrada = malha_filtrada[malha_filtrada[col_concess_alvo].isin(concessionarias_selecionadas)]
+        # Variável sentinela de diagnóstico tático
+        passo_atual = "Inicialização do botão de cálculo"
+        
+        with st.spinner("Processando análises geoespaciais..."):
+            try:
+                passo_atual = "Filtragem da malha ferroviária por operadora"
+                malha_filtrada = malha.copy()
+                if concessionarias_selecionadas and col_concess_alvo:
+                    malha_filtrada = malha_filtrada[malha_filtrada[col_concess_alvo].isin(concessionarias_selecionadas)]
+                    
+                passo_atual = "Projeção da malha e das cidades para CRS Métrico (EPSG:5880)"
+                malha_m = malha_filtrada.to_crs(epsg=5880)
+                sedes_origem_m = sedes_origem_df.to_crs(epsg=5880)
+                sedes_destino_m = sedes_destino_df.to_crs(epsg=5880)
                 
-            malha_m = malha_filtrada.to_crs(epsg=5880)
-            sedes_origem_m = sedes_origem_df.to_crs(epsg=5880)
-            sedes_destino_m = sedes_destino_df.to_crs(epsg=5880)
-            
-            ponto_origem = sedes_origem_m[sedes_origem_m['name_muni'] == muni_origem].geometry.values[0]
-            ponto_destino = sedes_destino_m[sedes_destino_m['name_muni'] == muni_destino].geometry.values[0]
-            
-            G = extrair_grafo_ferroviario(malha_m)
-            no_origem = encontrar_no_mais_proximo(G, ponto_origem)
-            no_destino = encontrar_no_mais_proximo(G, ponto_destino)
-            
-            if no_origem == no_destino:
-                st.error("Origem e destino atraídos para o mesmo nó técnico.")
-            else:
-                try:
+                ponto_origem = sedes_origem_m[sedes_origem_m['name_muni'] == muni_origem].geometry.values[0]
+                ponto_destino = sedes_destino_m[sedes_destino_m['name_muni'] == muni_destino].geometry.values[0]
+                
+                passo_atual = "Construção do Grafo Topológico (Nós e Arestas)"
+                G = extrair_grafo_ferroviario(malha_m)
+                
+                passo_atual = "Atração espacial dos municípios para os nós técnicos do grafo"
+                no_origem = encontrar_no_mais_proximo(G, ponto_origem)
+                no_destino = encontrar_no_mais_proximo(G, ponto_destino)
+                
+                if no_origem == no_destino:
+                    st.error("Origem e destino atraídos para o mesmo nó técnico.")
+                else:
+                    passo_atual = "Cálculo do Menor Caminho nos trilhos (NetworkX Shortest Path)"
                     caminho_nos = nx.shortest_path(G, source=no_origem, target=no_destino, weight='weight')
                     rota_unificada = LineString(caminho_nos)
                     comprimento_total_km = sum(G[caminho_nos[i]][caminho_nos[i+1]]['weight'] for i in range(len(caminho_nos)-1))
                     
+                    passo_atual = "Cálculo da BBox de abrangência da rota em WGS84"
                     gdf_rota_temp = gpd.GeoDataFrame(geometry=[rota_unificada], crs="EPSG:5880").to_crs(epsg=4326)
                     bbox_rota = gdf_rota_temp.geometry.iloc[0].bounds
                     margin = 0.12
                     bbox_expandida = (bbox_rota[0]-margin, bbox_rota[1]-margin, bbox_rota[2]+margin, bbox_rota[3]+margin)
                     
+                    passo_atual = "Carregamento das bases Parquet indexadas por BBox"
                     ucs, log_uc = carregar_camada_com_telemetria("dados/unidades_conservacao.parquet", bbox_expandida, "Unidades de Conservação")
                     tis, log_ti = carregar_camada_com_telemetria("dados/terras_indigenas.parquet", bbox_expandida, "Terras Indígenas")
                     riscos, log_risco = carregar_camada_com_telemetria("dados/areas_risco.parquet", bbox_expandida, "Áreas de Risco (CPRM)")
@@ -189,14 +199,17 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                     painel_logs = [log_uc, log_ti, log_risco, log_rio, log_setor, log_rod, log_pat]
                     soma_pesos = w_ti + w_risco + w_uc + w_setores + w_rios
                     
+                    passo_atual = "Criação do buffer do Corredor Tático de 1.5 km para clipagem"
                     gdf_corr_m = gpd.GeoDataFrame(geometry=[rota_unificada], crs="EPSG:5880")
                     corredor_seguro_wgs84 = gdf_corr_m.buffer(1500).to_crs(epsg=4326).unary_union
                     
+                    passo_atual = "Início do fatiamento em Macro Trechos Diários"
                     tam_trecho_metros = rota_unificada.length / num_trechos
                     listagem_trechos_diarios = []
                     todos_os_top_micros = []
                     
                     for i in range(num_trechos):
+                        passo_atual = f"Fatiando e processando intersecções do Macro Trecho - Dia {i+1}"
                         inicio_m = i * tam_trecho_metros
                         fim_m = (i + 1) * tam_trecho_metros
                         sub_trecho_geom = substring(rota_unificada, inicio_m, fim_m)
@@ -238,10 +251,12 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                         score_macro = ((nota_ti * w_ti) + (nota_risco * w_risco) + (nota_uc * w_uc) + (nota_setor * w_setores) + (nota_rio * w_rios)) / soma_pesos
                         criticidade, cor = ("CRÍTICA", "red") if score_macro >= 4.5 else (("ALTA", "orange") if score_macro >= 2.5 else (("MÉDIA", "yellow") if score_macro >= 0.8 else ("BAIXA", "blue")))
                         
+                        # Loop interno fatiamento de 1 km
                         micro_start = inicio_m
                         micro_chunks_dia = []
                         
                         while micro_start < fim_m:
+                            passo_atual = f"Fatiando e analisando Micro Hotspot de 1 km no Dia {i+1} (km {micro_start/1000:.1f})"
                             micro_end = min(micro_start + 1000.0, fim_m)
                             if (micro_end - micro_start) < 50.0: break
                             
@@ -294,9 +309,11 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                             'pn_pontos': list_pn_coords, 'pontes_pontes': list_pontes_coords, 'geometry': sub_trecho_geom
                         })
                         
+                    passo_atual = "Fechamento das tabelas macro e micro em GeoDataFrames"
                     gdf_cronograma = gpd.GeoDataFrame(listagem_trechos_diarios, crs="EPSG:5880")
                     gdf_top_micros = gpd.GeoDataFrame(todos_os_top_micros, geometry='geometry', crs="EPSG:5880")
                     
+                    passo_atual = "Filtro e extração de coordenadas lat/lon dos Pátios de Apoio"
                     if not patios.empty:
                         patios_map = patios[patios.intersects(corredor_seguro_wgs84)].copy()
                         if not patios_map.empty:
@@ -308,12 +325,23 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                     else:
                         patios_map = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
                     
+                    # --- CORREÇÃO ABSOLUTA DE GRAFIA DOS PASSOS DE OPTM_MAP ---
+                    passo_atual = "Executando Clipagem e Otimização da camada: Hidrografia (Rios)"
                     rios_map = otimizar_camada_para_mapa(rios, corredor_seguro_wgs84)
+                    
+                    passo_atual = "Executando Clipagem e Otimização da camada: Unidades de Conservação"
                     ucs_map = otimizar_camada_para_mapa(ucs, corredor_seguro_wgs84)
+                    
+                    passo_atual = "Executando Clipagem e Otimização da camada: Terras Indígenas"
                     tis_map = otimizar_camada_para_mapa(tis, corredor_seguro_wgs84)
+                    
+                    passo_atual = "Executando Clipagem e Otimização da camada: Áreas de Risco (CPRM)"
                     riscos_map = otimizar_camada_para_mapa(riscos, corredor_seguro_wgs84)
+                    
+                    passo_atual = "Executando Clipagem e Otimização da camada: Malha Rodoviária"
                     rodovias_map = otimizar_camada_para_mapa(rodovias, corredor_seguro_wgs84)
                     
+                    passo_atual = "Salvando resultados consolidados no session_state do Streamlit"
                     st.session_state.dados_calculados = {
                         "muni_origem": muni_origem, "muni_destino": muni_destino,
                         "uf_origem": uf_origem, "uf_destino": uf_destino,
@@ -328,6 +356,12 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                     }
                 except nx.NetworkXNoPath:
                     st.error("Sem conexão ferroviária contínua instalada entre as duas cidades.")
+            
+            except Exception as erro_interno:
+                # Se o app explodir em qualquer linha, capturamos o culpado na tela
+                st.error(f"❌ **O aplicativo falhou na execução de um passo geográfico!**")
+                st.error(f"📍 **Etapa da Falha:** `{passo_atual}`")
+                st.error(f"⚠️ **Detalhes Técnicos:** `{erro_interno}`")
 
 # --- 6. EXIBIÇÃO EM PAINEL INTELIGENTE ---
 if st.session_state.dados_calculados is not None:
@@ -347,8 +381,6 @@ if st.session_state.dados_calculados is not None:
         with col_lista:
             st.write("### 🗓️ Matriz de Sensibilidade e Alvos de Fiscalização")
             gdf_wgs84 = dados['gdf_cronograma_wgs84']
-            
-            # --- BLINDAGEM DEFENSIVA CONTRA CACHE RESIDUAL USANDO .GET() ---
             gdf_micros_wgs84 = dados.get('gdf_top_micros_wgs84', None)
             
             for idx, row in gdf_wgs84.iterrows():
@@ -377,14 +409,12 @@ if st.session_state.dados_calculados is not None:
         with col_mapa:
             st.write("### 🗺️ Mapa Temático Dinâmico Avançado")
             
-            # --- BLINDAGEM CONTRA CACHE VELHO NO ENQUADRAMENTO DO CANVA ---
             bbox_box = dados.get("bbox_rota", None)
             m = folium.Map(tiles="CartoDB positron")
             
             if bbox_box is not None:
                 m.fit_bounds([[bbox_box[1], bbox_box[0]], [bbox_box[3], bbox_box[2]]])
             else:
-                # Fallback de centralização seguro caso a memória residual trave
                 m.location = [-23.55, -46.63]
                 m.zoom_start = 7
                 
