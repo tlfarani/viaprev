@@ -91,17 +91,14 @@ def carregar_camada_com_telemetria(caminho_parquet, bbox_wgs84, nome_camada):
             log["status"] = "🔴 Falha Crítica"
             return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326"), log
 
-# --- NOVO: FUNÇÃO DE ENGENHARIA CARTOGRÁFICA PARA ALÍVIO DE VÉRTICES ---
 def otimizar_camada_para_mapa(gdf, corredor):
     if gdf is None or gdf.empty:
         return None
     sub_gdf = gdf[gdf.intersects(corredor)].copy()
     if sub_gdf.empty:
         return None
-    # Recorta a geometria rigidamente no corredor de 1.5km eliminando rebarbas pesadas de background
     sub_gdf['geometry'] = sub_gdf.geometry.intersection(corredor)
     sub_gdf = sub_gdf[~sub_gdf.geometry.is_empty]
-    # Simplifica as linhas/polígonos removendo nós milimétricos redundantes
     sub_gdf['geometry'] = sub_gdf.geometry.simplify(0.0002, preserve_topology=True)
     return sub_gdf if not sub_gdf.empty else None
 
@@ -178,10 +175,9 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                     
                     gdf_rota_temp = gpd.GeoDataFrame(geometry=[rota_unificada], crs="EPSG:5880").to_crs(epsg=4326)
                     bbox_rota = gdf_rota_temp.geometry.iloc[0].bounds
-                    margin = 0.12 # Margem de segurança de enquadramento ampliada
+                    margin = 0.12
                     bbox_expandida = (bbox_rota[0]-margin, bbox_rota[1]-margin, bbox_rota[2]+margin, bbox_rota[3]+margin)
                     
-                    # Carregamento de dados de suporte via BBox nativo rápido
                     ucs, log_uc = carregar_camada_com_telemetria("dados/unidades_conservacao.parquet", bbox_expandida, "Unidades de Conservação")
                     tis, log_ti = carregar_camada_com_telemetria("dados/terras_indigenas.parquet", bbox_expandida, "Terras Indígenas")
                     riscos, log_risco = carregar_camada_com_telemetria("dados/areas_risco.parquet", bbox_expandida, "Áreas de Risco (CPRM)")
@@ -193,7 +189,6 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                     painel_logs = [log_uc, log_ti, log_risco, log_rio, log_setor, log_rod, log_pat]
                     soma_pesos = w_ti + w_risco + w_uc + w_setores + w_rios
                     
-                    # Geração do buffer do corredor de 1.5km para clipagem cartográfica radical de alívio
                     gdf_corr_m = gpd.GeoDataFrame(geometry=[rota_unificada], crs="EPSG:5880")
                     corredor_seguro_wgs84 = gdf_corr_m.buffer(1500).to_crs(epsg=4326).unary_union
                     
@@ -302,22 +297,22 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                     gdf_cronograma = gpd.GeoDataFrame(listagem_trechos_diarios, crs="EPSG:5880")
                     gdf_top_micros = gpd.GeoDataFrame(todos_os_top_micros, geometry='geometry', crs="EPSG:5880")
                     
-                    # Filtro de pontos de apoio (Pátios) restrito ao corredor linear da rota
-                    patios_map = patios[patios.intersects(corredor_seguro_wgs84)].copy() if not patios.empty else gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
-                    if not patios_map.empty:
-                        centroides_patios = patios_map.geometry.centroid
-                        patios_map['lat'] = centroides_patios.y.round(5)
-                        patios_map['lon'] = centroides_patios.x.round(5)
-                        col_nome_temp = [c for c in patios_map.columns if 'nome' in c or 'patio' in c or 'oficina' in c]
-                        patios_map['nome_exibicao'] = patios_map[col_nome_temp[0]].astype(str).str.strip().str.upper() if col_nome_temp else "ESTRUTURA FERROVIÁRIA"
+                    if not patios.empty:
+                        patios_map = patios[patios.intersects(corredor_seguro_wgs84)].copy()
+                        if not patios_map.empty:
+                            centroides_patios = patios_map.geometry.centroid
+                            patios_map['lat'] = centroides_patios.y.round(5)
+                            patios_map['lon'] = centroides_patios.x.round(5)
+                            col_nome_temp = [c for c in patios_map.columns if 'nome' in c or 'patio' in c or 'oficina' in c]
+                            patios_map['nome_exibicao'] = patios_map[col_nome_temp[0]].astype(str).str.strip().str.upper() if col_nome_temp else "ESTRUTURA FERROVIÁRIA"
+                    else:
+                        patios_map = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
                     
-                    # --- EXECUÇÃO DO FILTRO DE ALÍVIO CARTOGRÁFICO DE PONTOS (RECORTA E SIMPLIFICA) ---
-                    # Reduz em 98% o volume de vetores complexos enviados ao navegador
-                    rios_map = otimizar_camada_para_mapa(rios, corredor_seguro_wgs84)
-                    ucs_map = otimizar_camada_para_mapa(ucs, corredor_seguro_wgs84)
-                    tis_map = otimizar_camada_para_mapa(tis, corredor_seguro_wgs84)
-                    riscos_map = otimizar_camada_para_mapa(riscos, corredor_seguro_wgs84)
-                    rodovias_map = otimizar_camada_para_mapa(rodovias, corredor_seguro_wgs84)
+                    rios_map = otimizar_camada_para_mapa(rios, corridor_seguro_wgs84)
+                    ucs_map = otimizar_camada_para_mapa(ucs, corridor_seguro_wgs84)
+                    tis_map = otimizar_camada_para_mapa(tis, corridor_seguro_wgs84)
+                    riscos_map = otimizar_camada_para_mapa(riscos, corridor_seguro_wgs84)
+                    rodovias_map = otimizar_camada_para_mapa(rodovias, corridor_seguro_wgs84)
                     
                     st.session_state.dados_calculados = {
                         "muni_origem": muni_origem, "muni_destino": muni_destino,
@@ -352,6 +347,8 @@ if st.session_state.dados_calculados is not None:
         with col_lista:
             st.write("### 🗓️ Matriz de Sensibilidade e Alvos de Fiscalização")
             gdf_wgs84 = dados['gdf_cronograma_wgs84']
+            
+            # --- BLINDAGEM DEFENSIVA CONTRA CACHE RESIDUAL USANDO .GET() ---
             gdf_micros_wgs84 = dados.get('gdf_top_micros_wgs84', None)
             
             for idx, row in gdf_wgs84.iterrows():
@@ -380,18 +377,22 @@ if st.session_state.dados_calculados is not None:
         with col_mapa:
             st.write("### 🗺️ Mapa Temático Dinâmico Avançado")
             
-            # Inicialização limpa do mapa centrada na rota calculada
-            bbox_box = dados["bbox_rota"]
+            # --- BLINDAGEM CONTRA CACHE VELHO NO ENQUADRAMENTO DO CANVA ---
+            bbox_box = dados.get("bbox_rota", None)
             m = folium.Map(tiles="CartoDB positron")
             
-            # Enquadramento automático inteligente com margens perfeitas para rotas de qualquer tamanho
-            m.fit_bounds([[bbox_box[1], bbox_box[0]], [bbox_box[3], bbox_box[2]]])
+            if bbox_box is not None:
+                m.fit_bounds([[bbox_box[1], bbox_box[0]], [bbox_box[3], bbox_box[2]]])
+            else:
+                # Fallback de centralização seguro caso a memória residual trave
+                m.location = [-23.55, -46.63]
+                m.zoom_start = 7
+                
             m.add_child(folium.LatLngPopup())
             
-            # --- INJEÇÃO DAS CAMADAS BASE RECORTADAS E OTIMIZADAS (ABREM DESLIGADAS) ---
             df_rios = dados.get("rios_wgs84")
             if df_rios is not None and not df_rios.empty:
-                folium.GeoJson(df_rios, name="💧 Hidrografia (Parquet)", show=False, style_function=lambda x: {'color': '#1d70b8', 'weight': 2, 'opacity': 0.7}).add_to(m)
+                folium.GeoJson(df_rios, name="💧 Hidrografia (Parquet)", show=False, style_function=lambda x: {'color': '#1d70b8', 'weight': 2}).add_to(m)
             
             df_ucs = dados.get("ucs_wgs84")
             if df_ucs is not None and not df_ucs.empty:
@@ -407,9 +408,8 @@ if st.session_state.dados_calculados is not None:
             
             df_rodovias = dados.get("rodovias_wgs84")
             if df_rodovias is not None and not df_rodovias.empty:
-                folium.GeoJson(df_rodovias, name="🛣️ Malha Rodoviária", show=False, style_function=lambda x: {'color': '#707070', 'weight': 1.1, 'opacity': 0.5}).add_to(m)
+                folium.GeoJson(df_rodovias, name="🛣️ Malha Rodoviária", show=False, style_function=lambda x: {'color': '#707070', 'weight': 1.2}).add_to(m)
             
-            # --- CAMADA DE INFRAESTRUTURA/PÁTIOS: ABRE ATIVA POR PADRÃO (show=True) ---
             df_patios = dados.get("patios_wgs84")
             if df_patios is not None and not df_patios.empty:
                 folium.GeoJson(
@@ -419,11 +419,10 @@ if st.session_state.dados_calculados is not None:
                     popup=folium.GeoJsonPopup(fields=['nome_exibicao', 'lat', 'lon'], aliases=['Estrutura: ', 'Lat: ', 'Lon: '])
                 ).add_to(m)
 
-            # 1. Desenho da Malha dos Macro Trechos Diários (Abrem Ativos)
             for idx, row in gdf_wgs84.iterrows():
                 cor = row['cor_rgb']
                 folium.GeoJson(
-                    row['geometry'].__geo_interface__, name=f"🛤️ {row['id_dia']}", show=True,
+                    row['geometry'].__geo_interface__, name=f"🛤️ {row['id_dia']}",
                     style_function=lambda x, c=cor: {'color': c, 'weight': 5, 'opacity': 0.8}
                 ).add_to(m)
                 
@@ -432,7 +431,6 @@ if st.session_state.dados_calculados is not None:
                 for pt_rio in row['pontes_pontes']:
                     folium.CircleMarker(location=pt_rio, radius=4, color='darkblue', fill=True, fill_color='cyan', popup="🌉 Ponte Ferroviária").add_to(m)
             
-            # 2. Desenho dos Alvos Críticos de 1 km em Magenta Neon (Abrem Ativos)
             if gdf_micros_wgs84 is not None and not gdf_micros_wgs84.empty:
                 folium.GeoJson(
                     gdf_micros_wgs84, name="🎯 Alvos Críticos de Vistoria (1 km)", show=True,
@@ -441,7 +439,4 @@ if st.session_state.dados_calculados is not None:
                 ).add_to(m)
             
             folium.LayerControl(position='topright', collapsed=False).add_to(m)
-            
-            # --- SOLUÇÃO DE CONGELAMENTO DE REPROCESSAMENTO REDUNDANTE ---
-            # Ao monitorar apenas o clique nos popups ("last_object_clicked"), o mapa congela e para de rodar o script ao dar Zoom/Pan.
             st_folium(m, height=580, use_container_width=True, key="via_prev_map_canvas", returned_objects=["last_object_clicked"])
