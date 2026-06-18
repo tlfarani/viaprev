@@ -253,12 +253,24 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                             
                             score_micro = ((m_n_ti * w_ti) + (m_n_risco * w_risco) + (m_n_uc * w_uc) + (m_n_setor * w_setores) + (m_n_rio * w_rios)) / soma_pesos
                             
+                            # --- CORREÇÃO CIRÚRGICA: Montagem dinâmica e segura do resumo de interferências ---
+                            if m_ucs and m_riscos:
+                                resumo = f"🌳 UC: {m_ucs[0][:15]}... | ⚠️ Risco: {m_riscos[0]}"
+                            elif m_ucs:
+                                resumo = f"🌳 UC: {m_ucs[0][:25]}..."
+                            elif m_riscos:
+                                resumo = f"⚠️ Risco CPRM: {m_riscos[0]}"
+                            elif m_tis:
+                                resumo = f"🏹 TI: {m_tis[0][:25]}..."
+                            else:
+                                resumo = "Baixa interferência socioambiental direta"
+                            
                             micro_chunks_dia.append({
                                 'id_dia': f"Dia {i+1}",
                                 'km_inicial': micro_start / 1000,
                                 'km_final': micro_end / 1000,
                                 'score_num': score_micro,
-                                'resumo_interf': f"UC: {m_ucs[0][:20]}... | Risco: {m_riscos[0] if m_riscos else 'Nenhum'}" if (m_ucs or m_riscos) else "Baixa interferência direta",
+                                'resumo_interf': resumo,
                                 'geometry': micro_geom
                             })
                             micro_start += 1000.0
