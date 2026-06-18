@@ -1,4 +1,5 @@
 import streamlit as st
+import gpd = geopandas as gpd
 import geopandas as gpd
 import geobr
 import networkx as nx
@@ -12,10 +13,10 @@ import os
 st.set_page_config(
     layout="wide", 
     page_title="ViaPrev: Planejador Nacional de Vistoria Ferroviária",
-    page_icon="𚊊"
+    page_icon="🚊"
 )
 
-st.title("𚊊 ViaPrev: Planejador de Vistoria Ferroviária com Matriz de Risco")
+st.title("🚊 ViaPrev: Planejador de Vistoria Ferroviária com Matriz de Risco")
 st.markdown("Análise multicritério interestadual com identificação de Alvos Críticos de 1 km para vistoria in loco.")
 
 # --- 1. INICIALIZAÇÃO DA MEMÓRIA DO APP ---
@@ -91,19 +92,30 @@ def carregar_camada_com_telemetria(caminho_parquet, bbox_wgs84, nome_camada):
             log["status"] = "🔴 Falha Crítica"
             return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326"), log
 
-# --- NOVO ENGENHO DE OTIMIZAÇÃO: Evita a criação de GeometryCollections corruptas ---
-def otimizar_camada_para_mapa(gdf, corredor):
+# --- FUNÇÃO DE INTELIGÊNCIA GEOGRÁFICA REVISADA: Purifica tipos primitivos puros ---
+def otimizar_camada_para_mapa(gdf, corredor, tipo_esperado="polygon"):
     if gdf is None or gdf.empty:
         return None
-    # Filtra de forma estável quem intercepta o corredor de interesse
+    # 1. Filtro rápido de intersecção por proximidade
     sub_gdf = gdf[gdf.intersects(corredor)].copy()
     if sub_gdf.empty:
         return None
-    # Corrige qualquer invalideza topográfica nativa dos polígonos estaduais
+    # 2. Recorte rígido no limite do corredor para emagrecer o payload
+    sub_gdf['geometry'] = sub_gdf.geometry.intersection(corredor)
     sub_gdf['geometry'] = sub_gdf.geometry.make_valid()
-    # Simplifica os vértices preservando a tipologia primitiva (Polygon permanece Polygon)
-    sub_gdf['geometry'] = sub_gdf.geometry.simplify(0.0005, preserve_topology=True)
-    return sub_gdf
+    sub_gdf = sub_gdf[~sub_gdf.geometry.is_empty]
+    
+    # 3. Purificação estrita de feições (Bane GeometryCollections mistas que quebram o Leaflet)
+    if tipo_esperado == "polygon":
+        sub_gdf = sub_gdf[sub_gdf.geometry.type.isin(['Polygon', 'MultiPolygon'])]
+    elif tipo_esperado == "line":
+        sub_gdf = sub_gdf[sub_gdf.geometry.type.isin(['LineString', 'MultiLineString'])]
+        
+    if sub_gdf.empty:
+        return None
+    # 4. Simplificação de nós topológicos redundantes
+    sub_gdf['geometry'] = sub_gdf.geometry.simplify(0.0003, preserve_topology=True)
+    return sub_gdf if not sub_gdf.empty else None
 
 
 # --- 4. INTERFACE DO USUÁRIO ---
@@ -318,28 +330,29 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                     if not patios.empty:
                         patios_map = patios[patios.intersects(corredor_seguro_wgs84)].copy()
                         if not patios_map.empty:
-                            centroides_patios = patios_map.geometry.centroid
-                            patios_map['lat'] = centroides_patios.y.round(5)
-                            patios_map['lon'] = centroides_patios.x.round(5)
+                            patios_map['geometry'] = patios_map.geometry.centroid
+                            patios_map['lat'] = patios_map.geometry.y.round(5)
+                            patios_map['lon'] = patios_map.geometry.x.round(5)
                             col_nome_temp = [c for c in patios_map.columns if 'nome' in c or 'patio' in c or 'oficina' in c]
                             patios_map['nome_exibicao'] = patios_map[col_nome_temp[0]].astype(str).str.strip().str.upper() if col_nome_temp else "ESTRUTURA FERROVIÁRIA"
                     else:
                         patios_map = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
                     
+                    # --- EXECUÇÃO CIRÚRGICA DA FILTRAGEM PURA DE GEOMETRIAS SÓLIDAS ---
                     passo_atual = "Executando Clipagem e Otimização da camada: Hidrografia (Rios)"
-                    rios_map = otimizar_camada_para_mapa(rios, corredor_seguro_wgs84)
+                    rios_map = otimizar_camada_para_mapa(rios, corridor_seguro_wgs84, tipo_esperado="line")
                     
                     passo_atual = "Executando Clipagem e Otimização da camada: Unidades de Conservação"
-                    ucs_map = otimizar_camada_para_mapa(ucs, corredor_seguro_wgs84)
+                    ucs_map = otimizar_camada_para_mapa(ucs, corredor_seguro_wgs84, tipo_esperado="polygon")
                     
                     passo_atual = "Executando Clipagem e Otimização da camada: Terras Indígenas"
-                    tis_map = otimizar_camada_para_mapa(tis, corredor_seguro_wgs84)
+                    tis_map = otimizar_camada_para_mapa(tis, corredor_seguro_wgs84, tipo_esperado="polygon")
                     
                     passo_atual = "Executando Clipagem e Otimização da camada: Áreas de Risco (CPRM)"
-                    riscos_map = otimizar_camada_para_mapa(riscos, corredor_seguro_wgs84)
+                    riscos_map = otimizar_camada_para_mapa(riscos, corredor_seguro_wgs84, tipo_esperado="polygon")
                     
                     passo_atual = "Executando Clipagem e Otimização da camada: Malha Rodoviária"
-                    rodovias_map = otimizar_camada_para_mapa(rodovias, corredor_seguro_wgs84)
+                    rodovias_map = otimizar_camada_para_mapa(rodovias, corredor_seguro_wgs84, tipo_esperado="line")
                     
                     passo_atual = "Salvando resultados consolidados no session_state do Streamlit"
                     st.session_state.dados_calculados = {
