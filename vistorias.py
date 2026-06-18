@@ -111,57 +111,40 @@ def carregar_camada_com_telemetria(caminho_parquet, bbox_wgs84, nome_camada):
             return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326"), log
 
 
-# --- 4. INTERFACE DO USUÁRIO (SIDEBAR) ---
-st.sidebar.header("1. Seleção de Região")
-lista_ufs = sorted(sedes['abbrev_state'].unique())
-uf_selecionada = st.sidebar.selectbox("Selecione a UF:", lista_ufs, index=lista_ufs.index("SP") if "SP" in lista_ufs else 0)
+# --- 4. INTERFACE: SELETOR DE CONCESSIONÁRIAS REAL ---
+st.sidebar.header("2.1. Controle de Concessionárias")
 
-sedes_filtradas = sedes[sedes['abbrev_state'] == uf_selecionada].sort_values(by="name_muni")
-lista_municipios = sedes_filtradas['name_muni'].unique()
+col_concess_alvo = 'concessionaria'
+lista_concessionarias = sorted(malha[col_concess_alvo].unique())
 
-st.sidebar.header("2. Rota da Viagem")
-muni_origem = st.sidebar.selectbox("Município de Partida:", lista_municipios)
-muni_destino = st.sidebar.selectbox("Município de Destino:", [m for m in lista_municipios if m != muni_origem])
+concessionarias_selecionadas = st.sidebar.multiselect(
+    "Ferrovias autorizadas para o traçado:",
+    options=lista_concessionarias,
+    # Pré-marca de forma inteligente as principais que você audita no estado
+    default=[c for c in lista_concessionarias if "PAULISTA" in c or "MRS" in c or "CENTRO-ATLÂNTICA" in c],
+    help="Remova as operadoras que você deseja bloquear no cálculo de menor caminho."
+)
 
-# --- ADIÇÃO: FILTRO DINÂMICO DE CONCESSIONÁRIA ---
-st.sidebar.header("2.1. Filtro de Concessionária")
-
-# Busca automática por colunas que guardem o nome da concessionária ou malha
-col_concess = [col for col in malha.columns if any(x in col.lower() for x in ['conces', 'malha', 'operad', 'empresa'])]
-
-if col_concess:
-    col_concess_alvo = col_concess[0]
-    # Extrai a lista de empresas únicas presentes na malha ferroviária
-    lista_concessionarias = sorted(malha[col_concess_alvo].dropna().unique())
-    
-    concessionarias_selecionadas = st.sidebar.multiselect(
-        "Ferrovias autorizadas para rota:",
-        options=lista_concessionarias,
-        default=lista_concessionarias, # Por padrão, deixa todas marcadas
-        help="Remova as empresas que você não deseja que façam parte do traçado da rota."
-    )
-else:
-    concessionarias_selecionadas = None
-    st.sidebar.warning("⚠️ Coluna de concessionária não identificada na malha ferroviária.")
-
-st.sidebar.header("3. Cronograma")
-num_trechos = st.sidebar.number_input("Quantidade de trechos a dividir:", min_value=1, value=3)
-
-st.sidebar.header("⚙️ 4. Pesos de Criticidade (1 a 5)")
-w_ti = st.sidebar.slider("🏹 Terras Indígenas", 1, 5, value=5)
-w_risco = st.sidebar.slider("⚠️ Riscos Geológicos", 1, 5, value=4)
-w_uc = st.sidebar.slider("🌳 Unidades de Conservação", 1, 5, value=4)
-w_setores = st.sidebar.slider("👥 Adensamento / Censo", 1, 5, value=2)
-w_rios = st.sidebar.slider("💧 Hidrografia / Rios", 1, 5, value=2)
+with st.sidebar.expander("📊 Ver Status Geral da Malha Nacional"):
+    if 'status' in malha.columns:
+        st.write(malha['status'].value_counts())
 
 
 # --- 5. MOTOR DE CÁLCULO E ANÁLISE MULTICRITÉRIO ---
+# --- DENTRO DO BOTÃO: FILTRAGEM GEOGRÁFICA DA REDE ---
 if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=True):
     if len(malha) == 1 and malha.geometry.iloc[0].coords[0] == (0,0):
         st.error("A base ferroviária está ausente.")
     else:
-        with st.spinner("Executando cruzamentos geográficos e ponderação de pesos..."):
-            malha_m = malha.to_crs(epsg=5880)
+        with st.spinner("Filtrando malha concedida e executando análise multicritério..."):
+            
+            # Filtra os trilhos mantendo apenas as empresas autorizadas pelo analista
+            malha_filtrada = malha.copy()
+            if concessionarias_selecionadas:
+                malha_filtrada = malha_filtrada[malha_filtrada[col_concess_alvo].isin(concessionarias_selecionadas)]
+                
+            # Cria o grafo com base estritamente no subconjunto escolhido
+            malha_m = malha_filtrada.to_crs(epsg=5880)
             sedes_m = sedes_filtradas.to_crs(epsg=5880)
             
             ponto_origem = sedes_m[sedes_m['name_muni'] == muni_origem].geometry.values[0]
