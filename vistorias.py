@@ -1,6 +1,5 @@
 import streamlit as st
-import gpd as gpd
-import geopandas as gpd
+import geopandas as gpd  # Esta é a linha correta, a de cima foi removida!
 import geobr
 import networkx as nx
 import folium
