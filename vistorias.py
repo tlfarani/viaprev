@@ -123,6 +123,27 @@ st.sidebar.header("2. Rota da Viagem")
 muni_origem = st.sidebar.selectbox("Município de Partida:", lista_municipios)
 muni_destino = st.sidebar.selectbox("Município de Destino:", [m for m in lista_municipios if m != muni_origem])
 
+# --- ADIÇÃO: FILTRO DINÂMICO DE CONCESSIONÁRIA ---
+st.sidebar.header("2.1. Filtro de Concessionária")
+
+# Busca automática por colunas que guardem o nome da concessionária ou malha
+col_concess = [col for col in malha.columns if any(x in col.lower() for x in ['conces', 'malha', 'operad', 'empresa'])]
+
+if col_concess:
+    col_concess_alvo = col_concess[0]
+    # Extrai a lista de empresas únicas presentes na malha ferroviária
+    lista_concessionarias = sorted(malha[col_concess_alvo].dropna().unique())
+    
+    concessionarias_selecionadas = st.sidebar.multiselect(
+        "Ferrovias autorizadas para rota:",
+        options=lista_concessionarias,
+        default=lista_concessionarias, # Por padrão, deixa todas marcadas
+        help="Remova as empresas que você não deseja que façam parte do traçado da rota."
+    )
+else:
+    concessionarias_selecionadas = None
+    st.sidebar.warning("⚠️ Coluna de concessionária não identificada na malha ferroviária.")
+
 st.sidebar.header("3. Cronograma")
 num_trechos = st.sidebar.number_input("Quantidade de trechos a dividir:", min_value=1, value=3)
 
