@@ -79,7 +79,7 @@ O repositório está estruturado de forma modular, separando a aplicação em pr
 ├── .gitignore                          # Restrição de subida de arquivos brutos/temporários (.zip, .shp)
 ├── packages.txt                        # Dependências a nível de S.O. para o container Linux (GDAL, PROJ)
 ├── requirements.txt                    # Dependências de bibliotecas Python para instalação via pip
-└── vistorias.py                        # Script principal da aplicação (Interface Streamlit e Motores)
+└── viaprev.py                        # Script principal da aplicação (Interface Streamlit e Motores)
 
 ```
 
