@@ -148,7 +148,6 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
     if len(malha) == 1 and malha.geometry.iloc[0].coords[0] == (0,0):
         st.error("A base ferroviária está ausente.")
     else:
-        # Variável sentinela de diagnóstico tático
         passo_atual = "Inicialização do botão de cálculo"
         
         with st.spinner("Processando análises geoespaciais..."):
@@ -251,7 +250,6 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                         score_macro = ((nota_ti * w_ti) + (nota_risco * w_risco) + (nota_uc * w_uc) + (nota_setor * w_setores) + (nota_rio * w_rios)) / soma_pesos
                         criticidade, cor = ("CRÍTICA", "red") if score_macro >= 4.5 else (("ALTA", "orange") if score_macro >= 2.5 else (("MÉDIA", "yellow") if score_macro >= 0.8 else ("BAIXA", "blue")))
                         
-                        # Loop interno fatiamento de 1 km
                         micro_start = inicio_m
                         micro_chunks_dia = []
                         
@@ -325,7 +323,6 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                     else:
                         patios_map = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
                     
-                    # --- CORREÇÃO ABSOLUTA DE GRAFIA DOS PASSOS DE OPTM_MAP ---
                     passo_atual = "Executando Clipagem e Otimização da camada: Hidrografia (Rios)"
                     rios_map = otimizar_camada_para_mapa(rios, corredor_seguro_wgs84)
                     
@@ -358,7 +355,6 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                     st.error("Sem conexão ferroviária contínua instalada entre as duas cidades.")
             
             except Exception as erro_interno:
-                # Se o app explodir em qualquer linha, capturamos o culpado na tela
                 st.error(f"❌ **O aplicativo falhou na execução de um passo geográfico!**")
                 st.error(f"📍 **Etapa da Falha:** `{passo_atual}`")
                 st.error(f"⚠️ **Detalhes Técnicos:** `{erro_interno}`")
