@@ -12,10 +12,10 @@ import os
 st.set_page_config(
     layout="wide", 
     page_title="ViaPrev: Planejador Nacional de Vistoria Ferroviária",
-    page_icon="🚊"
+    page_icon="𚊊"
 )
 
-st.title("🚊 ViaPrev: Planejador de Vistoria Ferroviária com Matriz de Risco")
+st.title("𚊊 ViaPrev: Planejador de Vistoria Ferroviária com Matriz de Risco")
 st.markdown("Análise multicritério interestadual com identificação de Alvos Críticos de 1 km para vistoria in loco.")
 
 # --- 1. INICIALIZAÇÃO DA MEMÓRIA DO APP ---
@@ -91,16 +91,19 @@ def carregar_camada_com_telemetria(caminho_parquet, bbox_wgs84, nome_camada):
             log["status"] = "🔴 Falha Crítica"
             return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326"), log
 
+# --- NOVO ENGENHO DE OTIMIZAÇÃO: Evita a criação de GeometryCollections corruptas ---
 def otimizar_camada_para_mapa(gdf, corredor):
     if gdf is None or gdf.empty:
         return None
+    # Filtra de forma estável quem intercepta o corredor de interesse
     sub_gdf = gdf[gdf.intersects(corredor)].copy()
     if sub_gdf.empty:
         return None
-    sub_gdf['geometry'] = sub_gdf.geometry.intersection(corredor)
-    sub_gdf = sub_gdf[~sub_gdf.geometry.is_empty]
-    sub_gdf['geometry'] = sub_gdf.geometry.simplify(0.0002, preserve_topology=True)
-    return sub_gdf if not sub_gdf.empty else None
+    # Corrige qualquer invalideza topográfica nativa dos polígonos estaduais
+    sub_gdf['geometry'] = sub_gdf.geometry.make_valid()
+    # Simplifica os vértices preservando a tipologia primitiva (Polygon permanece Polygon)
+    sub_gdf['geometry'] = sub_gdf.geometry.simplify(0.0005, preserve_topology=True)
+    return sub_gdf
 
 
 # --- 4. INTERFACE DO USUÁRIO ---
