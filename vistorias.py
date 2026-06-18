@@ -12,11 +12,11 @@ import os
 st.set_page_config(
     layout="wide", 
     page_title="Planejador Nacional de Vistoria Ferroviária",
-    page_icon="🚊"
+    page_icon="𚊊"
 )
 
-st.title("🚊 Planejador de Vistoria Ferroviária com Matriz de Risco")
-st.markdown("Análise de criticidade socioambiental baseada em Combinação Linear Ponderada (Análise Multicritério).")
+st.title("𚊊 Planejador de Vistoria Ferroviária com Matriz de Risco")
+st.markdown("Análise de criticidade socioambientais baseada em Combinação Linear Ponderada (Análise Multicritério).")
 
 # --- 1. INICIALIZAÇÃO DA MEMÓRIA DO APP ---
 if "dados_calculados" not in st.session_state:
@@ -60,8 +60,6 @@ def encontrar_no_mais_proximo(grafo, ponto_cidade):
     cx, cy = ponto_cidade.x, ponto_cidade.y
     return min(nos, key=lambda no: (no[0] - cx)**2 + (no[1] - cy)**2)
 
-
-# --- NOVO: FUNÇÃO DE EXTRAÇÃO COM MOTOR DE REDUNDÂNCIA E TELEMETRIA ---
 def carregar_camada_com_telemetria(caminho_parquet, bbox_wgs84, nome_camada):
     """Carrega dados geográficos com validação contra falsos zeros e logs de execução."""
     log = {"camada": nome_camada, "status": "Não executado", "registros": 0, "detalhes": ""}
@@ -71,23 +69,19 @@ def carregar_camada_com_telemetria(caminho_parquet, bbox_wgs84, nome_camada):
         return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326"), log
         
     try:
-        # Tentativa 1: Filtro nativo por BBox (Rápido, mas sujeito a falhas de metadados)
         gdf = gpd.read_parquet(caminho_parquet, bbox=bbox_wgs84)
         gdf = gdf.to_crs(epsg=4326) if gdf.crs is not None else gdf.set_crs(epsg=4326)
         
         log["status"] = "🟢 Sucesso (BBox Nativo)"
         log["registros"] = len(gdf)
         
-        # INTERVENÇÃO CRÍTICA: Se o BBox nativo retornar 0 linhas, ativamos o Fallback Engine
         if len(gdf) == 0:
             log["status"] = "🟡 Acionado Fallback (Falso Zero Detectado)"
             gdf_completo = gpd.read_parquet(caminho_parquet)
             gdf_completo = gdf_completo.to_crs(epsg=4326) if gdf_completo.crs is not None else gdf_completo.set_crs(epsg=4326)
             
-            # Recorte espacial manual e preciso em memória RAM
             area_busca = box(*bbox_wgs84)
             gdf = gdf_completo[gdf_completo.intersects(area_busca)].copy()
-            
             log["registros"] = len(gdf)
             log["detalhes"] = f"Recuperado via varredura em memória RAM. Total filtrado: {len(gdf)} feições."
             
@@ -96,12 +90,10 @@ def carregar_camada_com_telemetria(caminho_parquet, bbox_wgs84, nome_camada):
     except Exception as e:
         log["status"] = "🟠 Erro no BBox (Executando Fallback Total)"
         try:
-            # Tentativa 2: Fallback total lendo o arquivo completo devido a falha de engine
             gdf_completo = gpd.read_parquet(caminho_parquet)
             gdf_completo = gdf_completo.to_crs(epsg=4326) if gdf_completo.crs is not None else gdf_completo.set_crs(epsg=4326)
             area_busca = box(*bbox_wgs84)
             gdf = gdf_completo[gdf_completo.intersects(area_busca)].copy()
-            
             log["registros"] = len(gdf)
             log["detalhes"] = f"Erro contornado. Dados filtrados manualmente. Origem do erro: {str(e)[:40]}"
             return gdf, log
@@ -111,16 +103,25 @@ def carregar_camada_com_telemetria(caminho_parquet, bbox_wgs84, nome_camada):
             return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326"), log
 
 
-# --- 4. INTERFACE: SELETOR DE CONCESSIONÁRIAS REAL ---
-st.sidebar.header("2.1. Controle de Concessionárias")
+# --- 4. INTERFACE DO USUÁRIO (SIDEBAR COMPLETA) ---
+st.sidebar.header("1. Seleção de Região")
+lista_ufs = sorted(sedes['abbrev_state'].unique())
+uf_selecionada = st.sidebar.selectbox("Selecione a UF:", lista_ufs, index=lista_ufs.index("SP") if "SP" in lista_ufs else 0)
 
+sedes_filtradas = sedes[sedes['abbrev_state'] == uf_selecionada].sort_values(by="name_muni")
+lista_municipios = sedes_filtradas['name_muni'].unique()
+
+st.sidebar.header("2. Rota da Viagem")
+muni_origem = st.sidebar.selectbox("Município de Partida:", lista_municipios, index=list(lista_municipios).index("Santos") if "Santos" in lista_municipios else 0)
+muni_destino = st.sidebar.selectbox("Município de Destino:", [m for m in lista_municipios if m != muni_origem], index=list([m for m in lista_municipios if m != muni_origem]).index("Rio Claro") if "Rio Claro" in [m for m in lista_municipios if m != muni_origem] else 0)
+
+st.sidebar.header("2.1. Controle de Concessionárias")
 col_concess_alvo = 'concessionaria'
 lista_concessionarias = sorted(malha[col_concess_alvo].unique())
 
 concessionarias_selecionadas = st.sidebar.multiselect(
     "Ferrovias autorizadas para o traçado:",
     options=lista_concessionarias,
-    # Pré-marca de forma inteligente as principais que você audita no estado
     default=[c for c in lista_concessionarias if "PAULISTA" in c or "MRS" in c or "CENTRO-ATLÂNTICA" in c],
     help="Remova as operadoras que você deseja bloquear no cálculo de menor caminho."
 )
@@ -129,21 +130,28 @@ with st.sidebar.expander("📊 Ver Status Geral da Malha Nacional"):
     if 'status' in malha.columns:
         st.write(malha['status'].value_counts())
 
+st.sidebar.header("3. Cronograma")
+num_trechos = st.sidebar.number_input("Quantidade de trechos a dividir:", min_value=1, value=3)
+
+st.sidebar.header("⚙️ 4. Pesos de Criticidade (1 a 5)")
+w_ti = st.sidebar.slider("🏹 Terras Indígenas", 1, 5, value=5)
+w_risco = st.sidebar.slider("⚠️ Riscos Geológicos", 1, 5, value=4)
+w_uc = st.sidebar.slider("🌳 Unidades de Conservação", 1, 5, value=4)
+w_setores = st.sidebar.slider("👥 Adensamento / Censo", 1, 5, value=2)
+w_rios = st.sidebar.slider("💧 Hidrografia / Rios", 1, 5, value=2)
+
 
 # --- 5. MOTOR DE CÁLCULO E ANÁLISE MULTICRITÉRIO ---
-# --- DENTRO DO BOTÃO: FILTRAGEM GEOGRÁFICA DA REDE ---
 if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=True):
     if len(malha) == 1 and malha.geometry.iloc[0].coords[0] == (0,0):
         st.error("A base ferroviária está ausente.")
     else:
         with st.spinner("Filtrando malha concedida e executando análise multicritério..."):
             
-            # Filtra os trilhos mantendo apenas as empresas autorizadas pelo analista
             malha_filtrada = malha.copy()
             if concessionarias_selecionadas:
                 malha_filtrada = malha_filtrada[malha_filtrada[col_concess_alvo].isin(concessionarias_selecionadas)]
                 
-            # Cria o grafo com base estritamente no subconjunto escolhido
             malha_m = malha_filtrada.to_crs(epsg=5880)
             sedes_m = sedes_filtradas.to_crs(epsg=5880)
             
@@ -162,7 +170,6 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                     rota_unificada = LineString(caminho_nos)
                     comprimento_total_km = sum(G[caminho_nos[i]][caminho_nos[i+1]]['weight'] for i in range(len(caminho_nos)-1))
                     
-                    # Extração dos limites da rota em WGS84
                     gdf_rota_temp = gpd.GeoDataFrame(geometry=[rota_unificada], crs="EPSG:5880").to_crs(epsg=4326)
                     bbox_rota = gdf_rota_temp.geometry.iloc[0].bounds
                     margin = 0.08
@@ -174,7 +181,6 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                         bbox_rota[3] + margin
                     )
                     
-                    # EXECUÇÃO DAS CAMADAS COM COLETA DE LOGS DE DIAGNÓSTICO
                     ucs, log_uc = carregar_camada_com_telemetria("dados/unidades_conservacao.parquet", bbox_expandida, "Unidades de Conservação")
                     tis, log_ti = carregar_camada_com_telemetria("dados/terras_indigenas.parquet", bbox_expandida, "Terras Indígenas")
                     riscos, log_risco = carregar_camada_com_telemetria("dados/areas_risco.parquet", bbox_expandida, "Áreas de Risco (CPRM)")
@@ -194,14 +200,12 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                         gdf_seg_m = gpd.GeoDataFrame(geometry=[sub_trecho_geom], crs="EPSG:5880")
                         buffer_wgs = gdf_seg_m.buffer(200).to_crs(epsg=4326).iloc[0]
                         
-                        # Processamento espacial das intersecções reais
                         hit_ucs = ucs[ucs.intersects(buffer_wgs)]['nome_uc'].unique().tolist() if not ucs.empty else []
                         hit_tis = tis[tis.intersects(buffer_wgs)]['nome_ti'].unique().tolist() if not tis.empty else []
                         hit_riscos = riscos[riscos.intersects(buffer_wgs)]['classe_risco'].unique().tolist() if not riscos.empty else []
                         hit_rios = rios[rios.intersects(buffer_wgs)]['nome_rio'].unique().tolist() if not rios.empty else []
                         count_setores = len(setores[setores.intersects(buffer_wgs)]) if not setores.empty else 0
                         
-                        # --- MATRIZ MULTICRITÉRIO (Notas de 0 a 10) ---
                         nota_ti = 10.0 if len(hit_tis) > 0 else 0.0
                         nota_uc = 8.0 if len(hit_ucs) > 0 else 0.0
                         nota_rio = 5.0 if len(hit_rios) > 0 else 0.0
@@ -273,7 +277,6 @@ if st.session_state.dados_calculados is not None:
         col1.metric("Distância Total nos Trilhos", f"{dados['comprimento_total_km']:.2f} km")
         col2.metric("Média de Deslocamento Diário", f"{(dados['comprimento_total_km'] / dados['num_trechos']):.2f} km/dia")
         
-        # --- NOVO: PAINEL DE TELEMETRIA VISÍVEL PARA O USUÁRIO ---
         if "logs_diagnostico" in dados:
             with st.expander("🛠️ Painel de Diagnóstico e Logs de Leitura Geográfica"):
                 st.markdown("Verifique abaixo o comportamento de carregamento das camadas geográficas Parquet:")
