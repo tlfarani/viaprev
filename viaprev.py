@@ -23,6 +23,9 @@ st.markdown("Análise multicritério interestadual com identificação de Alvos 
 if "dados_calculados" not in st.session_state:
     st.session_state.dados_calculados = None
 
+if "exibir_readme" not in st.session_state:
+    st.session_state.exibir_readme = False
+
 # --- 2. CARREGAMENTO DOS DADOS NACIONAIS BASE ---
 @st.cache_data(show_spinner=False)
 def carregar_bases_nacionais():
@@ -39,6 +42,22 @@ def carregar_bases_nacionais():
 
 with st.spinner("Carregando bases geográficas de apoio..."):
     malha, sedes, estados = carregar_bases_nacionais()
+
+@st.cache_data(show_spinner=False)
+def carregar_documentacao_readme():
+    if os.path.exists("README.md"):
+        with open("README.md", "r", encoding="utf-8") as f:
+            return f.read()
+    return "⚠️ Arquivo `README.md` não localizado na raiz do repositório."
+
+if st.button("📖 Exibir / Ocultar Manual do Sistema (README)", type="secondary"):
+    st.session_state.exibir_readme = not st.session_state.exibir_readme
+
+if st.session_state.exibir_readme:
+    with st.container():
+        st.markdown("---")
+        st.markdown(carregar_documentacao_readme())
+        st.markdown("---")
 
 # --- 3. FUNÇÕES AUXILIARES DE GRAFOS E ATRAÇÃO ---
 def extrair_grafo_ferroviario(gdf_ferrovia):
@@ -180,6 +199,13 @@ w_risco = st.sidebar.slider("⚠️ Riscos Geológicos", 1, 5, value=4)
 w_uc = st.sidebar.slider("🌳 Unidades de Conservação", 1, 5, value=4)
 w_setores = st.sidebar.slider("👥 Adensamento / Censo", 1, 5, value=2)
 w_rios = st.sidebar.slider("💧 Hidrografia / Rios", 1, 5, value=2)
+
+st.sidebar.markdown("---")
+st.sidebar.caption(
+    "🛰️ **Desenvolvedor do Sistema:**\n\n"
+    "**Tiago Luz Farani**\n\n"
+    "*Analista Ambiental — IBAMA*"
+)
 
 
 # --- 5. MOTOR DE CÁLCULO MULTI-PARADAS E ANÁLISE MULTICRÍTICA ---
