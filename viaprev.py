@@ -1,5 +1,6 @@
 import streamlit as st
 import geopandas as gpd
+import pandas as pd
 import geobr
 import networkx as nx
 import folium
@@ -26,6 +27,7 @@ if "dados_calculados" not in st.session_state:
 @st.cache_data(show_spinner=False)
 def carregar_bases_nacionais():
     sedes_municipios = geobr.read_municipal_seat()
+    estados_br = geobr.read_state() # Nova camada leve usada no cruzamento dinâmico de fronteiras
     try:
         malha_ferroviaria = gpd.read_parquet("dados/malha_ferroviaria.parquet")
         if malha_ferroviaria.crs is None:
@@ -33,10 +35,10 @@ def carregar_bases_nacionais():
     except Exception:
         st.sidebar.error("❌ Arquivo 'dados/malha_ferroviaria.parquet' ausente!")
         malha_ferroviaria = gpd.GeoDataFrame(geometry=[LineString([(0,0), (0,0)])], crs="EPSG:4326")
-    return malha_ferroviaria, sedes_municipios
+    return malha_ferroviaria, sedes_municipios, estados_br
 
 with st.spinner("Carregando bases geográficas de apoio..."):
-    malha, sedes = carregar_bases_nacionais()
+    malha, sedes, estados = carregar_bases_nacionais()
 
 # --- 3. FUNÇÕES AUXILIARES DE GRAFOS E ATRAÇÃO ---
 def extrair_grafo_ferroviario(gdf_ferrovia):
@@ -122,7 +124,7 @@ uf_origem = st.sidebar.selectbox("UF de Partida:", lista_ufs, index=lista_ufs.in
 sedes_origem_df = sedes[sedes['abbrev_state'] == uf_origem].sort_values(by="name_muni")
 muni_origem = st.sidebar.selectbox("Município de Partida:", sedes_origem_df['name_muni'].unique(), index=0)
 
-# 4.2. Injeção Dinâmica de Paradas Intermediárias (Novidade)
+# 4.2. Injeção Dinâmica de Paradas Intermediárias
 st.sidebar.subheader("📍 Paradas Intermediárias")
 num_paradas = st.sidebar.number_input("Quantidade de paradas adicionais:", min_value=0, max_value=6, value=0, step=1)
 listagem_paradas_gui = []
@@ -169,7 +171,7 @@ w_setores = st.sidebar.slider("👥 Adensamento / Censo", 1, 5, value=2)
 w_rios = st.sidebar.slider("💧 Hidrografia / Rios", 1, 5, value=2)
 
 
-# --- 5. MOTOR DE CÁLCULO MULTI-PARADAS E ANÁLISE MULTICRITÉRIO ---
+# --- 5. MOTOR DE CÁLCULO MULTI-PARADAS E ANÁLISE MULTICRÍTICA ---
 if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=True):
     if len(malha) == 1 and malha.geometry.iloc[0].coords[0] == (0,0):
         st.error("A base ferroviária está ausente.")
@@ -191,14 +193,12 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                 nomes_municipios = []
                 coords_wgs84_cidades = []
                 
-                # Injeta a Origem
                 p_orig = sedes_origem_df[sedes_origem_df['name_muni'] == muni_origem].geometry.values[0]
                 p_orig_wgs = sedes_origem_df[sedes_origem_df['name_muni'] == muni_origem].to_crs(epsg=4326).geometry.values[0]
                 pontos_geometria.append(p_orig)
                 nomes_municipios.append(muni_origem)
                 coords_wgs84_cidades.append((p_orig_wgs.y, p_orig_wgs.x))
                 
-                # Injeta as Paradas Intermediárias
                 for p_gui in listagem_paradas_gui:
                     p_geom = p_gui["df_filtrado"][p_gui["df_filtrado"]['name_muni'] == p_gui["muni"]].geometry.values[0]
                     p_wgs = p_gui["df_filtrado"][p_gui["df_filtrado"]['name_muni'] == p_gui["muni"]].to_crs(epsg=4326).geometry.values[0]
@@ -206,7 +206,6 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                     nomes_municipios.append(p_gui["muni"])
                     coords_wgs84_cidades.append((p_wgs.y, p_wgs.x))
                     
-                # Injeta o Destino Final
                 p_dest = sedes_destino_df[sedes_destino_df['name_muni'] == muni_destino].geometry.values[0]
                 p_dest_wgs = sedes_destino_df[sedes_destino_df['name_muni'] == muni_destino].to_crs(epsg=4326).geometry.values[0]
                 pontos_geometria.append(p_dest)
@@ -217,24 +216,22 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                 gdf_pontos_m = gpd.GeoDataFrame(geometry=pontos_geometria, crs="EPSG:4326").to_crs(epsg=5880)
                 nos_cadeia_ferroviaria = [encontrar_no_mais_proximo(G, geom) for geom in gdf_pontos_m.geometry]
                 
-                passo_atual = "Processando o encadeamento consecutivo de Menor Caminho (Multi-leg routing)"
+                passo_atual = "Processando o encadeamento consecutivo de Menor Caminho"
                 caminho_completo_nos = []
                 
                 for step in range(len(nos_cadeia_ferroviaria) - 1):
                     no_start = nos_cadeia_ferroviaria[step]
                     no_end = nos_cadeia_ferroviaria[step + 1]
-                    
-                    if no_start == no_end:
-                        continue # Pula se o usuário escolheu cidades adjacentes atraídas ao mesmo nó
+                    if no_start == no_end: continue
                         
                     try:
                         trecho_nos = nx.shortest_path(G, source=no_start, target=no_end, weight='weight')
                         if not caminho_completo_nos:
                             caminho_completo_nos.extend(trecho_nos)
                         else:
-                            caminho_completo_nos.extend(trecho_nos[1:]) # Evita a duplicação do nó de junção
+                            caminho_completo_nos.extend(trecho_nos[1:])
                     except nx.NetworkXNoPath:
-                        raise nx.NetworkXNoPath(f"Sem conexão ferroviária contínua instalada entre os nós técnicos de '{nomes_municipios[step]}' e '{nomes_municipios[step+1]}'.")
+                        raise nx.NetworkXNoPath(f"Sem conexão ferroviária contínua instalada entre '{nomes_municipios[step]}' e '{nomes_municipios[step+1]}'.")
                 
                 if not caminho_completo_nos:
                     st.error("Erro topológico: Todos os pontos informados foram atraídos para um único nó no grafo.")
@@ -249,20 +246,47 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                 margin = 0.15
                 bbox_expandida = (bbox_rota[0]-margin, bbox_rota[1]-margin, bbox_rota[2]+margin, bbox_rota[3]+margin)
                 
-                passo_atual = "Carregamento das camadas Parquet filtradas por BBox"
+                # --- CARREGAMENTO PARTICIONADO INTELIGENTE DE RIOS (Novidade Crítica) ---
+                passo_atual = "Identificando estados interceptados pela rota para carregar os Parquets"
+                estados_interceptados = estados[estados.intersects(gdf_rota_temp.geometry.iloc[0])]
+                lista_ufs_rota = estados_interceptados['abbrev_state'].str.lower().unique().tolist()
+                
+                listagem_gdfs_rios = []
+                registros_rios_totais = 0
+                status_rio_log = "🟢 Sucesso (Particionado)"
+                
+                for uf_rio in lista_ufs_rota:
+                    caminho_rio_uf = f"dados/rios/rios_{uf_rio}.parquet"
+                    if os.path.exists(caminho_rio_uf):
+                        try:
+                            # Carrega aplicando o filtro BBox nativo em disco por estado (Altíssima performance de RAM)
+                            gdf_rio_uf = gpd.read_parquet(caminho_rio_uf, bbox=bbox_expandida)
+                            if not gdf_rio_uf.empty:
+                                listagem_gdfs_rios.append(gdf_rio_uf)
+                                registros_rios_totais += len(gdf_rio_uf)
+                        except Exception:
+                            pass
+                
+                if listagem_gdfs_rios:
+                    rios = pd.concat(listagem_gdfs_rios, ignore_index=True)
+                    rios = gpd.GeoDataFrame(rios, geometry='geometry', crs="EPSG:4326")
+                else:
+                    rios = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
+                    status_rio_log = "⚠️ Sem rios mapeados na BBox"
+                
+                # Carrega as demais camadas normais
                 ucs, log_uc = carregar_camada_com_telemetria("dados/unidades_conservacao.parquet", bbox_expandida, "Unidades de Conservação")
                 tis, log_ti = carregar_camada_com_telemetria("dados/terras_indigenas.parquet", bbox_expandida, "Terras Indígenas")
                 riscos, log_risco = carregar_camada_com_telemetria("dados/areas_risco.parquet", bbox_expandida, "Áreas de Risco (CPRM)")
-                rios, log_rio = carregar_camada_com_telemetria("dados/hidrografia.parquet", bbox_expandida, "Hidrografia (Rios)")
                 setores, log_setor = carregar_camada_com_telemetria("dados/setores_sp.parquet", bbox_expandida, "Setores Censitários (IBGE)")
                 rodovias, log_rod = carregar_camada_com_telemetria("dados/rodovias.parquet", bbox_expandida, "Malha Rodoviária")
                 patios, log_pat = carregar_camada_com_telemetria("dados/patios_oficinas.parquet", bbox_expandida, "Pátios e Oficinas")
                 
+                log_rio = {"camada": "Hidrografia (Rios)", "status": status_rio_log, "registros": registros_rios_totais}
                 painel_logs = [log_uc, log_ti, log_risco, log_rio, log_setor, log_rod, log_pat]
                 soma_pesos = w_ti + w_risco + w_uc + w_setores + w_rios
                 
                 passo_atual = "Clipagem estrita do Corredor Tático Macrorregional (1.5 km)"
-                gdf_corr_m = gpd.GeoDataFrame(geometry=[rota_unificada], crs="EPSG:5880")
                 corredor_seguro_wgs84 = gdf_corr_m.buffer(1500).to_crs(epsg=4326).unary_union
                 
                 passo_atual = "Início do fatiamento linear em trechos diários"
@@ -417,7 +441,6 @@ if st.session_state.dados_calculados is not None:
     dados = st.session_state.dados_calculados
     if "erro" in dados: st.error(dados["erro"])
     else:
-        # Formata o cabeçalho exibindo a sequência de paradas em formato textual limpo
         texto_roteiro = " ➡️ ".join(dados['nomes_sequencia'])
         st.subheader(f"📍 Roteiro Estabelecido: {texto_roteiro}")
         st.success("Análise multicritério por encadeamento de grafos concluída com sucesso!")
@@ -491,7 +514,6 @@ if st.session_state.dados_calculados is not None:
             if df_rodovias is not None and not df_rodovias.empty:
                 folium.GeoJson(df_rodovias, name="🛣️ Malha Rodoviária", show=False, style_function=lambda x: {'color': '#707070', 'weight': 1.2}).add_to(m)
             
-            # --- LOOP DE ICONES DE ESTRUTURAS FERROVIÁRIAS (Do seu ETL Parquet) ---
             df_patios = dados.get("patios_wgs84")
             if df_patios is not None and not df_patios.empty:
                 group_patios = folium.FeatureGroup(name="🏢 Estruturas e Pátios Ferroviários", show=True)
@@ -518,7 +540,6 @@ if st.session_state.dados_calculados is not None:
                     ).add_to(group_patios)
                 group_patios.add_to(m)
 
-            # --- PLOTAGEM DAS BANDEIRAS DOS MUNICÍPIOS DO ROTEIRO ---
             for idx_pt, nome_pt in enumerate(dados["nomes_sequencia"]):
                 coord = dados["coords_cidades"][idx_pt]
                 if idx_pt == 0:
@@ -528,7 +549,6 @@ if st.session_state.dados_calculados is not None:
                 else:
                     folium.Marker(location=coord, tooltip=f"📍 Parada {idx_pt}: {nome_pt}", icon=folium.Icon(color="blue", icon="flag", prefix="fa")).add_to(m)
 
-            # Desenho dos macro e micro trechos calculados
             for idx, row in gdf_wgs84.iterrows():
                 cor = row['cor_rgb']
                 folium.GeoJson(
