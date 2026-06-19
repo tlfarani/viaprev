@@ -284,15 +284,16 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                 
                 log_rio = {"camada": "Hidrografia (Rios)", "status": status_rio_log, "registros": registros_rios_totais}
                 painel_logs = [log_uc, log_ti, log_risco, log_rio, log_setor, log_rod, log_pat]
-                soma_pesos = w_ti + w_risco + w_uc + w_setores + w_rios
                 
+                soma_pesos = w_ti + w_risco + w_uc + w_setores + w_rios
+
                 passo_atual = "Clipagem estrita do Corredor Tático Macrorregional (1.5 km)"
+                gdf_corr_m = gpd.GeoDataFrame(geometry=[rota_unificada], crs="EPSG:5880")
                 corredor_seguro_wgs84 = gdf_corr_m.buffer(1500).to_crs(epsg=4326).unary_union
                 
                 passo_atual = "Início do fatiamento linear em trechos diários"
-                gdf_corr_m = gpd.GeoDataFrame(geometry=[rota_unificada], crs="EPSG:5880")
-                corredor_seguro_wgs84 = gdf_corr_m.buffer(1500).to_crs(epsg=4326).unary_union
                 tam_trecho_metros = rota_unificada.length / num_trechos
+                
                 listagem_trechos_diarios = []
                 todos_os_top_micros = []
                 
