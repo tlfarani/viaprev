@@ -109,10 +109,10 @@ def otimizar_camada_para_mapa(gdf, corredor, tipo_esperado="polygon"):
     sub_gdf['geometry'] = sub_gdf.geometry.make_valid()
     sub_gdf = sub_gdf[~sub_gdf.geometry.is_empty]
     
-    # 🌟 O SEGREDO DO SUCESSO: Desmembro coleções e formatos mistos em linhas atômicas isoladas
+    # 🌟 ADICIONE ESTA LINHA: Transforma coleções complexas em feições simples isoladas
     sub_gdf = sub_gdf.explode(index_parts=True)
     
-    # Filtragem estrita de primitivos puros para o Folium/Navegador não engasgar
+    # Filtro estrito de primitivos limpos (O Folium exige LineString pura para renderizar o menu lateral)
     if tipo_esperado == "polygon":
         sub_gdf = sub_gdf[sub_gdf.geometry.type.isin(['Polygon', 'MultiPolygon'])]
     elif tipo_esperado == "line":
@@ -270,8 +270,11 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                     caminho_rio_uf = f"dados/rios/rios_{uf_rio}.parquet"
                     if os.path.exists(caminho_rio_uf):
                         try:
-                            # Carrega aplicando o filtro BBox nativo em disco por estado (Altíssima performance de RAM)
-                            gdf_rio_uf = gpd.read_parquet(caminho_rio_uf, bbox=bbox_expandida)
+                            # Carrega o arquivo hígido e filtra o retângulo na memória RAM (Estabilidade Absoluta)
+                            gdf_rio_uf = gpd.read_parquet(caminho_rio_uf)
+                            area_busca = box(*bbox_expandida)
+                            gdf_rio_uf = gdf_rio_uf[gdf_rio_uf.intersects(area_busca)].copy()
+                            
                             if not gdf_rio_uf.empty:
                                 listagem_gdfs_rios.append(gdf_rio_uf)
                                 registros_rios_totais += len(gdf_rio_uf)
