@@ -290,6 +290,8 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                 corredor_seguro_wgs84 = gdf_corr_m.buffer(1500).to_crs(epsg=4326).unary_union
                 
                 passo_atual = "Início do fatiamento linear em trechos diários"
+                gdf_corr_m = gpd.GeoDataFrame(geometry=[rota_unificada], crs="EPSG:5880")
+                corredor_seguro_wgs84 = gdf_corr_m.buffer(1500).to_crs(epsg=4326).unary_union
                 tam_trecho_metros = rota_unificada.length / num_trechos
                 listagem_trechos_diarios = []
                 todos_os_top_micros = []
