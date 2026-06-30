@@ -525,7 +525,8 @@ if st.session_state.dados_calculados is not None:
                                 st.markdown(f"     ↳ *Coordenadas sugeridas:* `{m_row['coords_str']}`")
                             
                             with col_alvo_chk:
-                                st.checkbox("Vistoriar Faixa", key=chk_key)
+                                # value=True faz a faixa nascer selecionada por padrão
+                                is_selected = st.checkbox("Vistoriar Faixa", key=chk_key, value=True)
                         
                     else:
                         st.caption("⚠️ Alvos de 1km indisponíveis na memória residual. Clique em 'Calcular Rota' para gerar.")
