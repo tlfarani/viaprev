@@ -537,7 +537,7 @@ if st.session_state.dados_calculados is not None:
                 st.write("")
             
             # 🔽 ADICIONE ESTE BLOCO ABAIXO DO FIM DO LOOP PARA GERAR A CESTA E O DOWNLOAD_BUTTON 🔽
-            # 🔍 SUBSTITUA O BLOCO FINAL DA CESTA DE ALVOS POR ESTA VERSÃO TOTALMENTE DESVINCULADA 🔍
+            # 🔍 SUBSTITUA TODO O BLOCO FINAL DA CESTA DE ALVOS POR ESTA VERSÃO INTELIGENTE 🔍
             st.write("---")
             st.write("### 📦 Cesta de Alvos Selecionados para Campo")
             
@@ -547,7 +547,6 @@ if st.session_state.dados_calculados is not None:
             if gdf_micros_wgs84 is not None and not gdf_micros_wgs84.empty:
                 for _, m_row in gdf_micros_wgs84.iterrows():
                     chk_key = f"sel_{m_row['id_dia'].replace(' ', '_')}_{m_row['km_inicial']:.1f}"
-                    # 🌟 ALTERADO PARA True: Se o expander estiver fechado, o app assume automaticamente como selecionado!
                     if st.session_state.get(chk_key, True): 
                         lista_linhas.append({
                             'trecho': m_row['id_dia'].replace("Dia", "Trecho"),
@@ -567,73 +566,113 @@ if st.session_state.dados_calculados is not None:
             
             # 2. Área de inserção livre e desvinculada para coordenadas refinadas no QGIS
             st.markdown("##### 📍 Pontos de Parada Específicos (Mapeamento Refinado)")
-            st.caption("Cole abaixo as coordenadas exatas dos alvos identificados no QGIS (uma por linha, no formato: latitude, longitude). O sistema ordenará automaticamente do início ao fim da ferrovia.")
+            st.caption("Cole abaixo os alvos identificados no QGIS (um por linha, no formato: **latitude, longitude, descrição**). O sistema ordenará e vinculará o trecho/score automaticamente.")
             
-            coords_padas_texto = st.text_area("Lista de Coordenadas (Lat, Lon):", placeholder="Exemplo:\n-23.55052, -46.63330\n-23.56120, -46.65540", height=120, key="txt_coords_campo")
+            coords_padas_texto = st.text_area(
+                "Lista de Coordenadas (Lat, Lon, Descrição):", 
+                placeholder="Exemplo:\n-23.99142, -46.51437, Patio Paratinga\n-23.55052, -46.63330, Base Paulinia", 
+                height=120, 
+                key="txt_coords_campo"
+            )
             
-            lista_pontos_Validados = []
+            lista_pontos_validados = []
             if coords_padas_texto.strip():
                 linhas_coordenadas = coords_padas_texto.split("\n")
                 for linha_raw in linhas_coordenadas:
                     if not linha_raw.strip(): continue
                     if "," in linha_raw:
                         try:
-                            lat_s, lon_s = linha_raw.split(",")
-                            lat_f = float(lat_s.strip())
-                            lon_f = float(lon_s.strip())
+                            # Trata o corte por vírgulas aceitando espaços extras
+                            partes = [p.strip() for p in linha_raw.split(",")]
+                            if len(partes) < 2: continue
+                            
+                            lat_f = float(partes[0])
+                            lon_f = float(partes[1])
+                            
+                            # Captura a descrição customizada se informada, caso contrário gera um texto padrão
+                            desc_f = partes[2] if len(partes) >= 3 else "Ponto de Inspecao"
+                            
                             ponto_wgs = Point(lon_f, lat_f)
                             
-                            # Transforma para metros (EPSG:5880) para projetar sobre a malha de grafos
+                            # Transforma para metros (EPSG:5880) para projetar sobre a malha ferroviária
                             gdf_pt_tmp = gpd.GeoDataFrame(geometry=[ponto_wgs], crs="EPSG:4326").to_crs(epsg=5880)
                             ponto_m = gdf_pt_tmp.geometry.iloc[0]
                             
-                            # Mede a distância linear acumulada do ponto em relação ao início do traçado
+                            if "rota_unificada_m" not in dados:
+                                st.warning("⚠️ Por favor, clique em 'Calcular Rota' na barra lateral primeiro para calibrar o motor de ordenação.")
+                                st.stop()
+                                
+                            # Mede a distância linear acumulada do ponto em relação ao início do traçado para ordenação
                             distancia_linha = dados["rota_unificada_m"].project(ponto_m)
                             
-                            lista_pontos_Validados.append({
+                            # 🌟 INTELIGÊNCIA GEOGRÁFICA REFINADA: Vincula o ponto ao HOTSPOT de 1 km mais próximo
+                            gdf_micros = dados.get("gdf_top_micros_wgs84")
+                            
+                            if gdf_micros is not None and not gdf_micros.empty:
+                                # Procura o hotspot de 1 km mais próximo do ponto inserido
+                                idx_mais_proximo = gdf_micros.geometry.distance(ponto_wgs).idxmin()
+                                row_micro = gdf_micros.loc[idx_mais_proximo]
+                                
+                                trecho_detectado = row_micro['id_dia'].replace("Dia", "Trecho")
+                                score_detectado = round(float(row_micro['score_num']), 2)
+                            else:
+                                # Fallback de segurança: se não houver hotspots, usa o macro-trecho
+                                gdf_crono = dados["gdf_cronograma_wgs84"]
+                                idx_mais_proximo = gdf_crono.geometry.distance(ponto_wgs).idxmin()
+                                row_crono = gdf_crono.loc[idx_mais_proximo]
+                                trecho_detectado = row_crono['id_dia'].replace("Dia", "Trecho")
+                                score_detectado = round(float(row_crono['score_num']), 2)
+                            
+                            lista_pontos_validados.append({
                                 'geometry': ponto_wgs,
                                 'lat_ref': lat_f,
                                 'lon_ref': lon_f,
+                                'descricao': desc_f[:254],
+                                'trecho': trecho_detectado,
+                                'vulnerab': score_detectado,
                                 'dist_prog': distancia_linha
                             })
-                        except Exception:
-                            st.error(f"⚠️ Formato incorreto na linha: `{linha_raw}`. Use o padrão decimal: Latitude, Longitude.")
+                        except ValueError:
+                            st.error(f"⚠️ Formato numérico inválido na linha: `{linha_raw}`. Use o padrão decimal com pontos.")
+                        except Exception as e:
+                            st.error(f"💥 Erro geométrico ao processar a linha `{linha_raw}`: {e}")
             
             # Se houver pontos cadastrados, aplica a ordenação topológica crescente
-            if lista_pontos_Validados:
-                lista_pontos_ordenados = sorted(lista_pontos_Validados, key=lambda x: x['dist_prog'])
+            if lista_pontos_validados:
+                lista_pontos_ordenados = sorted(lista_pontos_validados, key=lambda x: x['dist_prog'])
                 
-                # Monta os atributos finais trocando "Dia" por "Trecho" e numerando de 1 a N
+                # Nomeia sequencialmente (Ponto 1, Ponto 2...) com base na distância da linha
                 for idx_ord, pt_dict in enumerate(lista_pontos_ordenados):
                     pt_dict['nome_alvo'] = f"Ponto {idx_ord + 1}"
-                    pt_dict['trecho'] = "Rota Geral"
-                    pt_dict['info_obs'] = f"Alvo ordenado na posicao {idx_ord + 1} do itinerario"
                 
                 gdf_exportar_pontos = gpd.GeoDataFrame(lista_pontos_ordenados, crs="EPSG:4326")
                 
                 st.markdown("##### 🎯 Itinerário de Campo Ordenado Consecutivamente:")
-                st.dataframe(gdf_exportar_pontos[['nome_alvo', 'lat_ref', 'lon_ref', 'info_obs']].rename(columns={
-                    'nome_alvo': 'Identificador', 'lat_ref': 'Latitude', 'lon_ref': 'Longitude', 'info_obs': 'Sequência de Visitação'
+                st.dataframe(gdf_exportar_pontos[['nome_alvo', 'descricao', 'trecho', 'vulnerab']].rename(columns={
+                    'nome_alvo': 'Identificador', 'descricao': 'Descrição', 'trecho': 'Trecho Vinculado', 'vulnerab': 'Índice Vulnerabilidade'
                 }), use_container_width=True, hide_index=True)
             
             # 3. Motor de compilação e empacotamento do ZIP
-            if lista_linhas or lista_pontos_Validados:
+            if lista_linhas or lista_pontos_validados:
                 import tempfile
                 import zipfile
                 
                 with tempfile.TemporaryDirectory() as tmpdir:
-                    # Exporta as faixas lineares se houver seleção
+                    # Grava as Faixas Lineares de 1km
                     if lista_linhas:
                         gdf_linhas_shp = gdf_exportar_linhas.rename(columns={'km_inicio': 'km_start'})
                         gdf_linhas_shp.to_file(os.path.join(tmpdir, "alvos_faixas_via.shp"), driver="ESRI Shapefile")
                     
-                    # Exporta os pontos ordenados se houver inserção manual
-                    if lista_pontos_Validados:
-                        gdf_pontos_shp = gdf_exportar_pontos[['nome_alvo', 'trecho', 'info_obs', 'geometry']].rename(columns={'nome_alvo': 'nome'})
+                    # Grava os Pontos com a tabela de atributos estruturada exigida (obedecendo limite DBF de 10 caracteres)
+                    if lista_pontos_validados:
+                        gdf_pontos_shp = gdf_exportar_pontos[['nome_alvo', 'descricao', 'trecho', 'vulnerab', 'geometry']].rename(columns={
+                            'nome_alvo': 'nome',
+                            'vulnerab': 'vulnerab'
+                        })
                         gdf_pontos_shp.to_file(os.path.join(tmpdir, "alvos_pontos_inspecao.shp"), driver="ESRI Shapefile")
-                        st.success("🟢 Sucesso! Camada de pontos sequenciados integrada ao Shapefile.")
+                        st.success(f"🟢 Sucesso! Camada de {len(lista_pontos_validados)} pontos estruturada e integrada ao Shapefile.")
                     
-                    # Gera o ZIP contendo as estruturas geradas (.shp, .dbf, .shx, .prj)
+                    # Consolida o ZIP
                     caminho_zip = os.path.join(tmpdir, "plano_vistoria_via_prev.zip")
                     with zipfile.ZipFile(caminho_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
                         for arquivo_pasta in os.listdir(tmpdir):
@@ -644,7 +683,7 @@ if st.session_state.dados_calculados is not None:
                         dados_binarios_zip = f_zip.read()
                 
                 st.download_button(
-                    label="📥 Baixar Pacote de Campo Atualizado (Shapefile ZIP)",
+                    label="📥 Baixar Pacote de Campo (Shapefile ZIP)",
                     data=dados_binarios_zip,
                     file_name="planejamento_vistoria_ibama.zip",
                     mime="application/zip",
