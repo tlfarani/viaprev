@@ -547,7 +547,8 @@ if st.session_state.dados_calculados is not None:
             if gdf_micros_wgs84 is not None and not gdf_micros_wgs84.empty:
                 for _, m_row in gdf_micros_wgs84.iterrows():
                     chk_key = f"sel_{m_row['id_dia'].replace(' ', '_')}_{m_row['km_inicial']:.1f}"
-                    if st.session_state.get(chk_key, False):
+                    # 🌟 ALTERADO PARA True: Se o expander estiver fechado, o app assume automaticamente como selecionado!
+                    if st.session_state.get(chk_key, True): 
                         lista_linhas.append({
                             'trecho': m_row['id_dia'].replace("Dia", "Trecho"),
                             'km_inicio': m_row['km_inicial'],
