@@ -511,10 +511,27 @@ if st.session_state.dados_calculados is not None:
                     if gdf_micros_wgs84 is not None and not gdf_micros_wgs84.empty:
                         st.markdown("🎯 **Top 5 Trechos de 1 km mais Sensíveis para Vistoria Prática:**")
                         micros_do_dia = gdf_micros_wgs84[gdf_micros_wgs84['id_dia'] == row['id_dia']]
+                        
                         for m_idx, m_row in micros_do_dia.iterrows():
-                            st.markdown(f"   • **📍 km {m_row['km_inicial']:.1f} ao {m_row['km_final']:.1f}** — Score do Índice: `{m_row['score_num']:.2f}`")
-                            st.markdown(f"     ↳ *Itens Sensíveis:* `{m_row['resumo_interf']}`")
-                            st.markdown(f"     ↳ *Coordenadas:* `{m_row['coords_str']}`")
+                            chk_key = f"sel_{row['id_dia'].replace(' ', '_')}_{m_row['km_inicial']:.1f}"
+                            
+                            col_alvo_txt, col_alvo_chk = st.columns([5, 1])
+                            with col_alvo_txt:
+                                st.markdown(f"   • **📍 km {m_row['km_inicial']:.1f} ao {m_row['km_final']:.1f}** — Score do Índice: `{m_row['score_num']:.2f}`")
+                                st.markdown(f"     ↳ *Itens Sensíveis:* `{m_row['resumo_interf']}`")
+                                st.markdown(f"     ↳ *Coordenadas sugeridas:* `{m_row['coords_str']}`")
+                            
+                            with col_alvo_chk:
+                                is_selected = st.checkbox("Vistoriar", key=chk_key)
+                            
+                            # Abre caixas de texto apenas se o checkbox estiver ativo
+                            if is_selected:
+                                col_lat, col_lon = st.columns(2)
+                                with col_lat:
+                                    st.text_input("Latitude Efetiva (Opcional):", key=f"lat_{chk_key}", placeholder="Ex: -23.55052")
+                                with col_lon:
+                                    st.text_input("Longitude Efetiva (Opcional):", key=f"lon_{chk_key}", placeholder="Ex: -46.63330")
+                        
                     else:
                         st.caption("⚠️ Alvos de 1km indisponíveis na memória residual. Clique em 'Calcular Rota' para gerar.")
                     
@@ -522,6 +539,85 @@ if st.session_state.dados_calculados is not None:
                     st.markdown(f"🛣️ **Passagens de Nível:** `{len(row['pn_pontos'])}` | 🌉 **Pontes sobre Rios:** `{len(row['pontes_pontes'])}` | 🏢 **Estruturas/Pátios:** {row['interf_patios']}")
                     st.caption(f"⚠️ **CPRM:** {row['interf_risco']} | 🌳 **UCs:** {row['interf_uc']}")
                 st.write("")
+            
+            # 🔽 ADICIONE ESTE BLOCO ABAIXO DO FIM DO LOOP PARA GERAR A CESTA E O DOWNLOAD_BUTTON 🔽
+            st.write("---")
+            st.write("### 📦 Cesta de Alvos Selecionados para Campo")
+            
+            lista_linhas = []
+            lista_pontos = []
+            
+            if gdf_micros_wgs84 is not None and not gdf_micros_wgs84.empty:
+                for _, m_row in gdf_micros_wgs84.iterrows():
+                    chk_key = f"sel_{m_row['id_dia'].replace(' ', '_')}_{m_row['km_inicial']:.1f}"
+                    
+                    if st.session_state.get(chk_key, False):
+                        dados_base = {
+                            'id_dia': m_row['id_dia'],
+                            'km_inicio': m_row['km_inicial'],
+                            'score': m_row['score_num'],
+                            'interf': m_row['resumo_interf'][:254]
+                        }
+                        
+                        # 1. Sempre armazena a faixa linear de 1 km
+                        item_linha = dados_base.copy()
+                        item_linha['geometry'] = m_row['geometry']
+                        lista_linhas.append(item_linha)
+                        
+                        # 2. Captura os inputs manuais extraídos do QGIS
+                        lat_str = st.session_state.get(f"lat_{chk_key}", "").strip()
+                        lon_str = st.session_state.get(f"lon_{chk_key}", "").strip()
+                        
+                        if lat_str and lon_str:
+                            try:
+                                item_ponto = dados_base.copy()
+                                item_ponto['geometry'] = Point(float(lon_str), float(lat_str))
+                                lista_pontos.append(item_ponto)
+                            except ValueError:
+                                st.error(f"⚠️ Coordenada inválida digitada no {m_row['id_dia']} (km {m_row['km_inicial']:.1f}).")
+            
+            if lista_linhas:
+                gdf_exportar_linhas = gpd.GeoDataFrame(lista_linhas, crs="EPSG:4326")
+                st.dataframe(gdf_exportar_linhas[['id_dia', 'km_inicio', 'score', 'interf']].rename(columns={
+                    'id_dia': 'Planejamento', 'km_inicio': 'KM Inicial', 'score': 'Score Risco', 'interf': 'Fatores Críticos'
+                }), use_container_width=True, hide_index=True)
+                
+                import tempfile
+                import zipfile
+                
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    # Exportação Fixa: Linhas (Faixas)
+                    gdf_linhas_shp = gdf_exportar_linhas.rename(columns={'id_dia': 'dia_plan', 'km_inicio': 'km_start'})
+                    gdf_linhas_shp.to_file(os.path.join(tmpdir, "alvos_faixas_via.shp"), driver="ESRI Shapefile")
+                    
+                    # Exportação Condicional: Pontos refinados
+                    if lista_pontos:
+                        gdf_exportar_pontos = gpd.GeoDataFrame(lista_pontos, crs="EPSG:4326")
+                        gdf_pontos_shp = gdf_exportar_pontos.rename(columns={'id_dia': 'dia_plan', 'km_inicio': 'km_start'})
+                        gdf_pontos_shp.to_file(os.path.join(tmpdir, "alvos_pontos_inspecao.shp"), driver="ESRI Shapefile")
+                        st.success(f"🟢 {len(lista_pontos)} ponto(s) de vistoria refinados adicionados ao pacote!")
+                    else:
+                        st.info("ℹ️ Coordenadas manuais vazias. O pacote conterá apenas as faixas lineares de 1 km.")
+                    
+                    # Compactação final do ZIP híbrido
+                    caminho_zip = os.path.join(tmpdir, "pacote_vistoria.zip")
+                    with zipfile.ZipFile(caminho_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                        for arquivo_pasta in os.listdir(tmpdir):
+                            if not arquivo_pasta.endswith('.zip'):
+                                zipf.write(os.path.join(tmpdir, arquivo_pasta), arquivo_pasta)
+                    
+                    with open(caminho_zip, "rb") as f_zip:
+                        dados_binarios_zip = f_zip.read()
+                
+                st.download_button(
+                    label="📥 Baixar Pacote de Campo (Shapefile ZIP)",
+                    data=dados_binarios_zip,
+                    file_name="planejamento_vistoria_ibama.zip",
+                    mime="application/zip",
+                    use_container_width=True
+                )
+            else:
+                st.info("💡 Marque a caixa 'Vistoriar' nos expanders de macro trechos acima para estruturar seu plano de campo.")
         
         with col_mapa:
             st.write("### 🗺️ Mapa Temático Dinâmico Avançado")
