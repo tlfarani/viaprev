@@ -464,6 +464,7 @@ if st.sidebar.button("Calcular Rota e Priorizar Trechos", use_container_width=Tr
                     "nomes_sequencia": nomes_municipios,
                     "coords_cidades": coords_wgs84_cidades,
                     "bbox_rota": bbox_rota,
+                    "rota_unificada_m": rota_unificada,
                     "comprimento_total_km": comprimento_total_km, "num_trechos": num_trechos,
                     "gdf_cronograma_wgs84": gdf_cronograma.to_crs(epsg=4326),
                     "gdf_top_micros_wgs84": gdf_top_micros.to_crs(epsg=4326),
@@ -513,7 +514,9 @@ if st.session_state.dados_calculados is not None:
                         micros_do_dia = gdf_micros_wgs84[gdf_micros_wgs84['id_dia'] == row['id_dia']]
                         
                         for m_idx, m_row in micros_do_dia.iterrows():
-                            chk_key = f"sel_{row['id_dia'].replace(' ', '_')}_{m_row['km_inicial']:.1f}"
+                            # Substitui dinamicamente o texto de "Dia" para "Trecho" na interface
+                            id_trecho_txt = m_row['id_dia'].replace("Dia", "Trecho")
+                            chk_key = f"sel_{m_row['id_dia'].replace(' ', '_')}_{m_row['km_inicial']:.1f}"
                             
                             col_alvo_txt, col_alvo_chk = st.columns([5, 1])
                             with col_alvo_txt:
@@ -522,15 +525,7 @@ if st.session_state.dados_calculados is not None:
                                 st.markdown(f"     ↳ *Coordenadas sugeridas:* `{m_row['coords_str']}`")
                             
                             with col_alvo_chk:
-                                is_selected = st.checkbox("Vistoriar", key=chk_key)
-                            
-                            # Abre caixas de texto apenas se o checkbox estiver ativo
-                            if is_selected:
-                                col_lat, col_lon = st.columns(2)
-                                with col_lat:
-                                    st.text_input("Latitude Efetiva (Opcional):", key=f"lat_{chk_key}", placeholder="Ex: -23.55052")
-                                with col_lon:
-                                    st.text_input("Longitude Efetiva (Opcional):", key=f"lon_{chk_key}", placeholder="Ex: -46.63330")
+                                st.checkbox("Vistoriar Faixa", key=chk_key)
                         
                     else:
                         st.caption("⚠️ Alvos de 1km indisponíveis na memória residual. Clique em 'Calcular Rota' para gerar.")
@@ -541,66 +536,103 @@ if st.session_state.dados_calculados is not None:
                 st.write("")
             
             # 🔽 ADICIONE ESTE BLOCO ABAIXO DO FIM DO LOOP PARA GERAR A CESTA E O DOWNLOAD_BUTTON 🔽
+            # 🔍 SUBSTITUA O BLOCO FINAL DA CESTA DE ALVOS POR ESTA VERSÃO TOTALMENTE DESVINCULADA 🔍
             st.write("---")
             st.write("### 📦 Cesta de Alvos Selecionados para Campo")
             
             lista_linhas = []
-            lista_pontos = []
             
+            # 1. Agrupa as faixas de 1km marcadas pelo usuário
             if gdf_micros_wgs84 is not None and not gdf_micros_wgs84.empty:
                 for _, m_row in gdf_micros_wgs84.iterrows():
                     chk_key = f"sel_{m_row['id_dia'].replace(' ', '_')}_{m_row['km_inicial']:.1f}"
-                    
                     if st.session_state.get(chk_key, False):
-                        dados_base = {
-                            'id_dia': m_row['id_dia'],
+                        lista_linhas.append({
+                            'trecho': m_row['id_dia'].replace("Dia", "Trecho"),
                             'km_inicio': m_row['km_inicial'],
                             'score': m_row['score_num'],
-                            'interf': m_row['resumo_interf'][:254]
-                        }
-                        
-                        # 1. Sempre armazena a faixa linear de 1 km
-                        item_linha = dados_base.copy()
-                        item_linha['geometry'] = m_row['geometry']
-                        lista_linhas.append(item_linha)
-                        
-                        # 2. Captura os inputs manuais extraídos do QGIS
-                        lat_str = st.session_state.get(f"lat_{chk_key}", "").strip()
-                        lon_str = st.session_state.get(f"lon_{chk_key}", "").strip()
-                        
-                        if lat_str and lon_str:
-                            try:
-                                item_ponto = dados_base.copy()
-                                item_ponto['geometry'] = Point(float(lon_str), float(lat_str))
-                                lista_pontos.append(item_ponto)
-                            except ValueError:
-                                st.error(f"⚠️ Coordenada inválida digitada no {m_row['id_dia']} (km {m_row['km_inicial']:.1f}).")
+                            'interf': m_row['resumo_interf'][:254],
+                            'geometry': m_row['geometry']
+                        })
             
+            # Exibe tabela das faixas se houver alguma selecionada
             if lista_linhas:
+                st.markdown("##### 🛤️ Faixas de 1 km Selecionadas:")
                 gdf_exportar_linhas = gpd.GeoDataFrame(lista_linhas, crs="EPSG:4326")
-                st.dataframe(gdf_exportar_linhas[['id_dia', 'km_inicio', 'score', 'interf']].rename(columns={
-                    'id_dia': 'Planejamento', 'km_inicio': 'KM Inicial', 'score': 'Score Risco', 'interf': 'Fatores Críticos'
+                st.dataframe(gdf_exportar_linhas[['trecho', 'km_inicio', 'score', 'interf']].rename(columns={
+                    'trecho': 'Trecho Referência', 'km_inicio': 'KM Inicial', 'score': 'Score Risco', 'interf': 'Fatores Críticos'
                 }), use_container_width=True, hide_index=True)
+            
+            # 2. Área de inserção livre e desvinculada para coordenadas refinadas no QGIS
+            st.markdown("##### 📍 Pontos de Parada Específicos (Mapeamento Refinado)")
+            st.caption("Cole abaixo as coordenadas exatas dos alvos identificados no QGIS (uma por linha, no formato: latitude, longitude). O sistema ordenará automaticamente do início ao fim da ferrovia.")
+            
+            coords_padas_texto = st.text_area("Lista de Coordenadas (Lat, Lon):", placeholder="Exemplo:\n-23.55052, -46.63330\n-23.56120, -46.65540", height=120, key="txt_coords_campo")
+            
+            lista_pontos_Validados = []
+            if coords_padas_texto.strip():
+                linhas_coordenadas = coords_padas_texto.split("\n")
+                for linha_raw in linhas_coordenadas:
+                    if not linha_raw.strip(): continue
+                    if "," in linha_raw:
+                        try:
+                            lat_s, lon_s = linha_raw.split(",")
+                            lat_f = float(lat_s.strip())
+                            lon_f = float(lon_s.strip())
+                            ponto_wgs = Point(lon_f, lat_f)
+                            
+                            # Transforma para metros (EPSG:5880) para projetar sobre a malha de grafos
+                            gdf_pt_tmp = gpd.GeoDataFrame(geometry=[ponto_wgs], crs="EPSG:4326").to_crs(epsg=5880)
+                            ponto_m = gdf_pt_tmp.geometry.iloc[0]
+                            
+                            # Mede a distância linear acumulada do ponto em relação ao início do traçado
+                            distancia_linha = dados["rota_unificada_m"].project(ponto_m)
+                            
+                            lista_pontos_Validados.append({
+                                'geometry': ponto_wgs,
+                                'lat_ref': lat_f,
+                                'lon_ref': lon_f,
+                                'dist_prog': distancia_linha
+                            })
+                        except Exception:
+                            st.error(f"⚠️ Formato incorreto na linha: `{linha_raw}`. Use o padrão decimal: Latitude, Longitude.")
+            
+            # Se houver pontos cadastrados, aplica a ordenação topológica crescente
+            if lista_pontos_Validados:
+                lista_pontos_ordenados = sorted(lista_pontos_Validados, key=lambda x: x['dist_prog'])
                 
+                # Monta os atributos finais trocando "Dia" por "Trecho" e numerando de 1 a N
+                for idx_ord, pt_dict in enumerate(lista_pontos_ordenados):
+                    pt_dict['nome_alvo'] = f"Ponto {idx_ord + 1}"
+                    pt_dict['trecho'] = "Rota Geral"
+                    pt_dict['info_obs'] = f"Alvo ordenado na posicao {idx_ord + 1} do itinerario"
+                
+                gdf_exportar_pontos = gpd.GeoDataFrame(lista_pontos_ordenados, crs="EPSG:4326")
+                
+                st.markdown("##### 🎯 Itinerário de Campo Ordenado Consecutivamente:")
+                st.dataframe(gdf_exportar_pontos[['nome_alvo', 'lat_ref', 'lon_ref', 'info_obs']].rename(columns={
+                    'nome_alvo': 'Identificador', 'lat_ref': 'Latitude', 'lon_ref': 'Longitude', 'info_obs': 'Sequência de Visitação'
+                }), use_container_width=True, hide_index=True)
+            
+            # 3. Motor de compilação e empacotamento do ZIP
+            if lista_linhas or lista_pontos_Validados:
                 import tempfile
                 import zipfile
                 
                 with tempfile.TemporaryDirectory() as tmpdir:
-                    # Exportação Fixa: Linhas (Faixas)
-                    gdf_linhas_shp = gdf_exportar_linhas.rename(columns={'id_dia': 'dia_plan', 'km_inicio': 'km_start'})
-                    gdf_linhas_shp.to_file(os.path.join(tmpdir, "alvos_faixas_via.shp"), driver="ESRI Shapefile")
+                    # Exporta as faixas lineares se houver seleção
+                    if lista_linhas:
+                        gdf_linhas_shp = gdf_exportar_linhas.rename(columns={'km_inicio': 'km_start'})
+                        gdf_linhas_shp.to_file(os.path.join(tmpdir, "alvos_faixas_via.shp"), driver="ESRI Shapefile")
                     
-                    # Exportação Condicional: Pontos refinados
-                    if lista_pontos:
-                        gdf_exportar_pontos = gpd.GeoDataFrame(lista_pontos, crs="EPSG:4326")
-                        gdf_pontos_shp = gdf_exportar_pontos.rename(columns={'id_dia': 'dia_plan', 'km_inicio': 'km_start'})
+                    # Exporta os pontos ordenados se houver inserção manual
+                    if lista_pontos_Validados:
+                        gdf_pontos_shp = gdf_exportar_pontos[['nome_alvo', 'trecho', 'info_obs', 'geometry']].rename(columns={'nome_alvo': 'nome'})
                         gdf_pontos_shp.to_file(os.path.join(tmpdir, "alvos_pontos_inspecao.shp"), driver="ESRI Shapefile")
-                        st.success(f"🟢 {len(lista_pontos)} ponto(s) de vistoria refinados adicionados ao pacote!")
-                    else:
-                        st.info("ℹ️ Coordenadas manuais vazias. O pacote conterá apenas as faixas lineares de 1 km.")
+                        st.success("🟢 Sucesso! Camada de pontos sequenciados integrada ao Shapefile.")
                     
-                    # Compactação final do ZIP híbrido
-                    caminho_zip = os.path.join(tmpdir, "pacote_vistoria.zip")
+                    # Gera o ZIP contendo as estruturas geradas (.shp, .dbf, .shx, .prj)
+                    caminho_zip = os.path.join(tmpdir, "plano_vistoria_via_prev.zip")
                     with zipfile.ZipFile(caminho_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
                         for arquivo_pasta in os.listdir(tmpdir):
                             if not arquivo_pasta.endswith('.zip'):
@@ -610,14 +642,14 @@ if st.session_state.dados_calculados is not None:
                         dados_binarios_zip = f_zip.read()
                 
                 st.download_button(
-                    label="📥 Baixar Pacote de Campo (Shapefile ZIP)",
+                    label="📥 Baixar Pacote de Campo Atualizado (Shapefile ZIP)",
                     data=dados_binarios_zip,
                     file_name="planejamento_vistoria_ibama.zip",
                     mime="application/zip",
                     use_container_width=True
                 )
             else:
-                st.info("💡 Marque a caixa 'Vistoriar' nos expanders de macro trechos acima para estruturar seu plano de campo.")
+                st.info("💡 Selecione as faixas desejadas acima ou cole uma lista de coordenadas para habilitar o download do pacote de campo.")
         
         with col_mapa:
             st.write("### 🗺️ Mapa Temático Dinâmico Avançado")
