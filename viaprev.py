@@ -674,7 +674,7 @@ if st.session_state.dados_calculados is not None:
                         gdf_pontos_shp.to_file(os.path.join(tmpdir, "alvos_pontos_inspecao.shp"), driver="ESRI Shapefile")
                         st.success(f"🟢 Sucesso! Camada de {len(lista_pontos_validados)} pontos integrada ao Shapefile.")
                         
-                        # --- GERAÇÃO DO PDF DE MAPAS TÁTICOS (VERSÃO ULTRA-REFINADA) ---
+                        # --- GERAÇÃO DO PDF DE MAPAS TÁTICOS (VERSÃO COM RACHURAS E LEGENDA REAL) ---
                         with st.spinner("Gerando encarte profissional de mapas em PDF..."):
                             pdf_buffer = io.BytesIO()
                             pdf_canvas = canvas.Canvas(pdf_buffer, pagesize=landscape(letter))
@@ -685,36 +685,35 @@ if st.session_state.dados_calculados is not None:
                                 gdf_ponto_focal = gpd.GeoDataFrame([pt_row], crs="EPSG:4326").to_crs(epsg=3857)
                                 pt_geom_m = gdf_ponto_focal.geometry.iloc[0]
                                 
-                                # 🌟 1. RENDERIZAÇÃO DAS CAMADAS VETORIAIS DE APOIO AO LONGO DA VIA (VIBRANTES)
+                                # 🌟 1. APLICAÇÃO DAS RACHURAS ESPECÍFICAS (FUNDO TRANSPARENTE PARA NÃO OBSCURECER O SATÉLITE)
                                 if dados.get("ucs_wgs84") is not None and not dados["ucs_wgs84"].empty:
                                     dados["ucs_wgs84"].to_crs(epsg=3857).plot(
-                                        ax=ax, facecolor='#2ecc71', edgecolor='#27ae60', alpha=0.35, linewidth=1, zorder=2
+                                        ax=ax, facecolor='none', edgecolor='white', hatch='\\\\\\', linewidth=0.8, zorder=2
                                     )
                                 if dados.get("tis_wgs84") is not None and not dados["tis_wgs84"].empty:
                                     dados["tis_wgs84"].to_crs(epsg=3857).plot(
-                                        ax=ax, facecolor='#e74c3c', edgecolor='#c0392b', alpha=0.4, linewidth=1, zorder=2
+                                        ax=ax, facecolor='none', edgecolor='red', hatch='///', linewidth=0.8, zorder=2
                                     )
                                 if dados.get("riscos_wgs84") is not None and not dados["riscos_wgs84"].empty:
                                     dados["riscos_wgs84"].to_crs(epsg=3857).plot(
-                                        ax=ax, facecolor='#f1c40f', edgecolor='#f39c12', alpha=0.35, linewidth=1, zorder=2
+                                        ax=ax, facecolor='none', edgecolor='yellow', hatch='|||', linewidth=0.8, zorder=2
                                     )
                                 if dados.get("rios_wgs84") is not None and not dados["rios_wgs84"].empty:
                                     dados["rios_wgs84"].to_crs(epsg=3857).plot(
-                                        ax=ax, color='#00d2ff', linewidth=1.8, alpha=0.8, zorder=2
+                                        ax=ax, color='#00d2ff', linewidth=1.5, alpha=0.8, zorder=2
                                     )
                                 
-                                # Desenha os trilhos com suavização (evita serrilhado)
+                                # Desenha a ferrovia
                                 dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='black', linewidth=3.5, zorder=3, antialiased=True)
                                 dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='white', linewidth=1.2, linestyle='--', zorder=4, antialiased=True)
                                 
                                 # Desenha o marcador do Ponto de Vistoria
                                 ax.scatter(pt_geom_m.x, pt_geom_m.y, color='#ff007f', s=160, edgecolor='white', linewidth=1.5, zorder=5)
                                 
-                                # Enquadramento tático ao redor do ponto (Janela aproximada de 2km)
+                                # Enquadramento ao redor do ponto
                                 ax.set_xlim(pt_geom_m.x - 1000, pt_geom_m.x + 1000)
                                 ax.set_ylim(pt_geom_m.y - 700, pt_geom_m.y + 700)
                                 
-                                # Adiciona o fundo de imagem de Satélite na tela principal
                                 try:
                                     cx.add_basemap(ax, source=cx.providers.Esri.WorldImagery, attribution="")
                                 except Exception:
@@ -723,22 +722,51 @@ if st.session_state.dados_calculados is not None:
                                 ax.get_xaxis().set_visible(False)
                                 ax.get_yaxis().set_visible(False)
                                 
-                                # 🌟 2. NOVO MINI-MAPA LOCALIZADOR COM OPENSTREETMAPS E ANTI-ALIASED
-                                ax_inset = ax.inset_axes([0.74, 0.68, 0.24, 0.30]) # Ajuste leve de tamanho e posição
+                                # 🌟 2. CONSTRUÇÃO DA LEGENDA CARTOGRÁFICA GRÁFICA (BOX FLUTUANTE)
+                                import matplotlib.patches as mpatches
+                                import matplotlib.lines as mlines
                                 
-                                # Plot de toda a malha no mini-mapa em 3857 para casar perfeitamente com o OSM
-                                dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(
-                                    ax=ax_inset, color='#2c3e50', linewidth=3.0, zorder=3, antialiased=True
+                                # Elementos básicos permanentes da legenda
+                                itens_legenda = [
+                                    mlines.Line2D([0], [0], color='black', linewidth=3, label='Ferrovia (Trilhos)'),
+                                    mlines.Line2D([0], [0], color='white', linewidth=1.2, linestyle='--', label='Eixo Central da Via'),
+                                    mlines.Line2D([0], [0], marker='o', color='none', markerfacecolor='#ff007f', markeredgecolor='white', markersize=9, label='Alvo In Loco Focal')
+                                ]
+                                
+                                # Inclui as camadas condicionais com seus respectivos padrões visuais reais
+                                if dados.get("rios_wgs84") is not None and not dados["rios_wgs84"].empty:
+                                    itens_legenda.append(mlines.Line2D([0], [0], color='#00d2ff', linewidth=2, label='Hidrografia (Canais/Rios)'))
+                                if dados.get("ucs_wgs84") is not None and not dados["ucs_wgs84"].empty:
+                                    itens_legenda.append(mpatches.Patch(facecolor='none', edgecolor='white', hatch='\\\\\\', label='Unidade de Conservação (Branco)'))
+                                if dados.get("tis_wgs84") is not None and not dados["tis_wgs84"].empty:
+                                    itens_legenda.append(mpatches.Patch(facecolor='none', edgecolor='red', hatch='///', label='Terra Indígena (Vermelho)'))
+                                if dados.get("riscos_wgs84") is not None and not dados["riscos_wgs84"].empty:
+                                    itens_legenda.append(mpatches.Patch(facecolor='none', edgecolor='yellow', hatch='|||', label='Área de Risco CPRM (Amarelo)'))
+                                
+                                # Desenha a caixa de legenda no canto inferior esquerdo sobre o mapa
+                                leg = ax.legend(
+                                    handles=itens_legenda,
+                                    loc='lower left',
+                                    frameon=True,
+                                    facecolor='#1e1e1e',
+                                    edgecolor='#555555',
+                                    labelcolor='white',
+                                    fontsize=7.5,
+                                    title="CONVENÇÕES CARTOGRÁFICAS",
+                                    title_fontsize=8
                                 )
+                                plt.setp(leg.get_title(), color='white', weight='bold')
                                 
-                                # Desenha o indicador de posição atual (Estrela operacional chamativa)
+                                # MINI-MAPA LOCALIZADOR (CANTO SUPERIOR DIREITO)
+                                ax_inset = ax.inset_axes([0.74, 0.68, 0.24, 0.30])
+                                dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(
+                                    ax=ax_inset, color='#2c3e50', linewidth=2.5, zorder=3, antialiased=True
+                                )
                                 gdf_ponto_focal.plot(ax=ax_inset, color='#ff007f', markersize=80, marker='*', edgecolor='white', linewidth=0.8, zorder=5)
                                 
-                                # Define uma abrangência regional de 50km em torno do alvo para dar contexto geográfico
                                 ax_inset.set_xlim(pt_geom_m.x - 50000, pt_geom_m.x + 50000)
                                 ax_inset.set_ylim(pt_geom_m.y - 50000, pt_geom_m.y + 50000)
                                 
-                                # Injeta o fundo do OpenStreetMap nativo no mini-mapa
                                 try:
                                     cx.add_basemap(ax_inset, source=cx.providers.OpenStreetMap.Mapnik, attribution="")
                                 except Exception:
@@ -746,24 +774,18 @@ if st.session_state.dados_calculados is not None:
                                 
                                 ax_inset.get_xaxis().set_visible(False)
                                 ax_inset.get_yaxis().set_visible(False)
-                                
-                                # Aplica uma moldura preta elegante e nítida ao redor do mini-mapa
                                 for spine in ax_inset.spines.values():
                                     spine.set_edgecolor('black')
                                     spine.set_linewidth(1.2)
                                 
-                                # Configuração do Cabeçalho e Metadados do Layout
+                                # Configuração do Cabeçalho do Layout
                                 plt.title(f"📍 {pt_row['nome_alvo']} — {pt_row['descricao']}\nVulnerabilidade Local: {pt_row['vulnerab']} ({pt_row['trecho']})", 
                                           fontsize=11, color='white', weight='bold', backgroundcolor='#1e1e1e', pad=8, loc='left')
-                                
-                                # Barra de Legendas Cartográficas Institucionais (Rodapé)
-                                text_legenda = "LEGENDA:  ── Ferrovia   ● Ponto Focal In Loco   ■ Hidrografia (Canais/Rios)   ■ UC   ■ Terra Indígena (TI)   ■ Área de Risco CPRM"
-                                fig.text(0.02, 0.02, text_legenda, fontsize=7, weight='semibold', color='white', backgroundcolor='#1e1e1e')
                                 
                                 fig.patch.set_facecolor('#1e1e1e')
                                 plt.tight_layout()
                                 
-                                # Converte o gráfico Matplotlib hígido em binário para escrita no PDF
+                                # Converte em imagem de memória para ReportLab
                                 img_buf = io.BytesIO()
                                 plt.savefig(img_buf, format='png', facecolor=fig.get_facecolor(), edgecolor='none', bbox_inches='tight')
                                 img_buf.seek(0)
