@@ -780,9 +780,10 @@ if st.session_state.dados_calculados is not None:
                                     spine.set_edgecolor('black')
                                     spine.set_linewidth(1.2)
                                 
-                                plt.title(f"📍 {pt_row['nome_alvo']} — {pt_row['descricao']}\nVulnerabilidade Local: {pt_row['vulnerab']} ({pt_row['trecho']})", 
+                                # Configuração do Cabeçalho do Layout com Coordenadas Injetadas
+                                plt.title(f"📍 {pt_row['nome_alvo']} — {pt_row['descricao']} [{pt_row['lat_ref']:.5f}, {pt_row['lon_ref']:.5f}]\nVulnerabilidade Local: {pt_row['vulnerab']} ({pt_row['trecho']})", 
                                           fontsize=11, color='white', weight='bold', backgroundcolor='#1e1e1e', pad=8, loc='left')
-                                
+                                                                                                
                                 fig.patch.set_facecolor('#1e1e1e')
                                 plt.tight_layout()
                                 
