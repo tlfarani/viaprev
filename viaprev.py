@@ -674,7 +674,7 @@ if st.session_state.dados_calculados is not None:
                         gdf_pontos_shp.to_file(os.path.join(tmpdir, "alvos_pontos_inspecao.shp"), driver="ESRI Shapefile")
                         st.success(f"🟢 Sucesso! Camada de {len(lista_pontos_validados)} pontos integrada ao Shapefile.")
                         
-                        # --- GERAÇÃO DO PDF DE MAPAS TÁTICOS ---
+                        # --- GERAÇÃO DO PDF DE MAPAS TÁTICOS (VERSÃO COM RACHURAS E LEGENDA REAL) ---
                         with st.spinner("Gerando encarte profissional de mapas em PDF..."):
                             pdf_buffer = io.BytesIO()
                             pdf_canvas = canvas.Canvas(pdf_buffer, pagesize=landscape(letter))
@@ -685,22 +685,36 @@ if st.session_state.dados_calculados is not None:
                                 gdf_ponto_focal = gpd.GeoDataFrame([pt_row], crs="EPSG:4326").to_crs(epsg=3857)
                                 pt_geom_m = gdf_ponto_focal.geometry.iloc[0]
                                 
-                                # Plot de apoio se as camadas existirem
-                                if dados.get("ucs_wgs84") is not None:
-                                    dados["ucs_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='green', alpha=0.2)
-                                if dados.get("tis_wgs84") is not None:
-                                    dados["tis_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='darkred', alpha=0.25)
-                                if dados.get("riscos_wgs84") is not None:
-                                    dados["riscos_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='orange', alpha=0.2)
-                                if dados.get("rios_wgs84") is not None:
-                                    dados["rios_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='#1d70b8', linewidth=1.5)
+                                # 🌟 1. APLICAÇÃO DE RACHURAS ESPARSAS (MÁXIMA TRANSPARÊNCIA PARA O SATÉLITE)
+                                if dados.get("ucs_wgs84") is not None and not dados["ucs_wgs84"].empty:
+                                    # Rachura simples invertida (\) bem espaçada
+                                    dados["ucs_wgs84"].to_crs(epsg=3857).plot(
+                                        ax=ax, facecolor='none', edgecolor='white', hatch='\\', linewidth=1.0, alpha=0.8, zorder=2
+                                    )
+                                if dados.get("tis_wgs84") is not None and not dados["tis_wgs84"].empty:
+                                    # 🌟 ATUALIZADO: Rachura simples (/) em marrom (#8B4513) para padrão institucional
+                                    dados["tis_wgs84"].to_crs(epsg=3857).plot(
+                                        ax=ax, facecolor='none', edgecolor='#8B4513', hatch='/', linewidth=1.0, alpha=0.8, zorder=2
+                                    )
+                                    
+                                if dados.get("riscos_wgs84") is not None and not dados["riscos_wgs84"].empty:
+                                    # Padrão de micropontos (.) em amarelo, eliminando conflito de linhas
+                                    dados["riscos_wgs84"].to_crs(epsg=3857).plot(
+                                        ax=ax, facecolor='none', edgecolor='#f1c40f', hatch='.', linewidth=0.8, alpha=0.9, zorder=2
+                                    )
+                                if dados.get("rios_wgs84") is not None and not dados["rios_wgs84"].empty:
+                                    dados["rios_wgs84"].to_crs(epsg=3857).plot(
+                                        ax=ax, color='#00d2ff', linewidth=1.5, alpha=0.8, zorder=2
+                                    )
                                 
-                                dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='black', linewidth=2.5, zorder=3)
-                                dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='white', linewidth=1.0, linestyle='--', zorder=4)
+                                # Desenha a ferrovia (Contraste preto e branco sobre o satélite)
+                                dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='black', linewidth=3.5, zorder=3, antialiased=True)
+                                dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='white', linewidth=1.2, linestyle='--', zorder=4, antialiased=True)
                                 
-                                # Desenha o ponto alvo
-                                ax.scatter(pt_geom_m.x, pt_geom_m.y, color='#ff007f', s=150, edgecolor='white', linewidth=1.5, zorder=5)
+                                # Desenha o marcador do Ponto de Vistoria
+                                ax.scatter(pt_geom_m.x, pt_geom_m.y, color='#ff007f', s=160, edgecolor='white', linewidth=1.5, zorder=5)
                                 
+                                # Enquadramento ao redor do ponto
                                 ax.set_xlim(pt_geom_m.x - 1000, pt_geom_m.x + 1000)
                                 ax.set_ylim(pt_geom_m.y - 700, pt_geom_m.y + 700)
                                 
@@ -710,28 +724,66 @@ if st.session_state.dados_calculados is not None:
                                     pass
                                 
                                 ax.get_xaxis().set_visible(False)
-                                ax.get_yaxis().set_visible(False) # 🌟 CORRIGIDO: get_yaxis() tudo junto
+                                ax.get_yaxis().set_visible(False)
                                 
-                                # INSET MAP (Mini mapa localizador superior direito)
-                                ax_inset = ax.inset_axes([0.76, 0.72, 0.22, 0.26])
-                                dados["gdf_cronograma_wgs84"].to_crs(epsg=5880).plot(ax=ax_inset, color='black', linewidth=1.5)
+                                # 🌟 2. ATUALIZAÇÃO DOS GRÁFICOS DA LEGENDA EM MOLDURA FLUTUANTE
+                                import matplotlib.patches as mpatches
+                                import matplotlib.lines as mlines
                                 
-                                # Pega a posição projetada do ponto atual para o mini-mapa
-                                gdf_pt_m_proj = gpd.GeoDataFrame([pt_row], crs="EPSG:4326").to_crs(epsg=5880)
-                                ponto_m_proj = gdf_pt_m_proj.geometry.iloc[0]
-                                gdf_pt_m_proj.plot(ax=ax_inset, color='#ff007f', markersize=40, marker='*')
+                                itens_legenda = [
+                                    mlines.Line2D([0], [0], color='black', linewidth=3, label='Ferrovia (Trilhos)'),
+                                    mlines.Line2D([0], [0], color='white', linewidth=1.2, linestyle='--', label='Eixo Central da Via'),
+                                    mlines.Line2D([0], [0], marker='o', color='none', markerfacecolor='#ff007f', markeredgecolor='white', markersize=9, label='Alvo In Loco Focal')
+                                ]
                                 
-                                ax_inset.set_xlim(ponto_m_proj.x - 60000, ponto_m_proj.x + 60000)
-                                ax_inset.set_ylim(ponto_m_proj.y - 60000, ponto_m_proj.y + 60000)
+                                if dados.get("rios_wgs84") is not None and not dados["rios_wgs84"].empty:
+                                    itens_legenda.append(mlines.Line2D([0], [0], color='#00d2ff', linewidth=2, label='Hidrografia (Canais/Rios)'))
+                                if dados.get("ucs_wgs84") is not None and not dados["ucs_wgs84"].empty:
+                                    itens_legenda.append(mpatches.Patch(facecolor='none', edgecolor='white', hatch='\\', label='Unidade de Conservação (Esparso)'))
+                                if dados.get("tis_wgs84") is not None and not dados["tis_wgs84"].empty:
+                                    # 🌟 ATUALIZADO: Cor do box e texto alterados para Marrom
+                                    itens_legenda.append(mpatches.Patch(facecolor='none', edgecolor='#8B4513', hatch='/', label='Terra Indígena (Marrom)'))
+                                if dados.get("riscos_wgs84") is not None and not dados["riscos_wgs84"].empty:
+                                    itens_legenda.append(mpatches.Patch(facecolor='none', edgecolor='#f1c40f', hatch='.', label='Área de Risco CPRM (Pontilhado)'))
+                                
+                                leg = ax.legend(
+                                    handles=itens_legenda,
+                                    loc='lower left',
+                                    frameon=True,
+                                    facecolor='#1e1e1e',
+                                    edgecolor='#555555',
+                                    labelcolor='white',
+                                    fontsize=7.5,
+                                    title="CONVENÇÕES CARTOGRÁFICAS",
+                                    title_fontsize=8
+                                )
+                                plt.setp(leg.get_title(), color='white', weight='bold')
+                                
+                                # MINI-MAPA LOCALIZADOR (Mantido estável com OpenStreetMap)
+                                ax_inset = ax.inset_axes([0.74, 0.68, 0.24, 0.30])
+                                dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(
+                                    ax=ax_inset, color='#2c3e50', linewidth=2.5, zorder=3, antialiased=True
+                                )
+                                gdf_ponto_focal.plot(ax=ax_inset, color='#ff007f', markersize=80, marker='*', edgecolor='white', linewidth=0.8, zorder=5)
+                                
+                                ax_inset.set_xlim(pt_geom_m.x - 50000, pt_geom_m.x + 50000)
+                                ax_inset.set_ylim(pt_geom_m.y - 50000, pt_geom_m.y + 50000)
+                                
+                                try:
+                                    cx.add_basemap(ax_inset, source=cx.providers.OpenStreetMap.Mapnik, attribution="")
+                                except Exception:
+                                    pass
+                                
                                 ax_inset.get_xaxis().set_visible(False)
-                                ax_inset.get_yaxis().set_visible(False) # 🌟 CORRIGIDO: get_yaxis() tudo junto
+                                ax_inset.get_yaxis().set_visible(False)
+                                for spine in ax_inset.spines.values():
+                                    spine.set_edgecolor('black')
+                                    spine.set_linewidth(1.2)
                                 
-                                plt.title(f"📍 {pt_row['nome_alvo']} — {pt_row['descricao']}\nVulnerabilidade: {pt_row['vulnerab']} ({pt_row['trecho']})", 
+                                # Configuração do Cabeçalho do Layout com Coordenadas Injetadas
+                                plt.title(f"📍 {pt_row['nome_alvo']} — {pt_row['descricao']} [{pt_row['lat_ref']:.5f}, {pt_row['lon_ref']:.5f}]\nVulnerabilidade Local: {pt_row['vulnerab']} ({pt_row['trecho']})", 
                                           fontsize=11, color='white', weight='bold', backgroundcolor='#1e1e1e', pad=8, loc='left')
-                                
-                                text_legenda = "LEGENDA:  ── Ferrovia   ● Ponto Focal   ■ Hidrografia   ■ UC   ■ Terra Indígena   ■ Risco Geológico"
-                                fig.text(0.02, 0.02, text_legenda, fontsize=7, weight='semibold', color='white', backgroundcolor='#1e1e1e')
-                                
+                                                                                                
                                 fig.patch.set_facecolor('#1e1e1e')
                                 plt.tight_layout()
                                 
