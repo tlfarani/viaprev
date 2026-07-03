@@ -8,6 +8,11 @@ from streamlit_folium import st_folium
 from shapely.ops import substring
 from shapely.geometry import LineString, Point, box
 import os
+import matplotlib.pyplot as plt
+import contextily as cx
+from reportlab.lib.pagesizes import letter, landscape
+from reportlab.pdfgen import canvas
+import io
 
 # Configuração da página do Streamlit
 st.set_page_config(
@@ -664,13 +669,130 @@ if st.session_state.dados_calculados is not None:
                         gdf_linhas_shp.to_file(os.path.join(tmpdir, "alvos_faixas_via.shp"), driver="ESRI Shapefile")
                     
                     # Grava os Pontos com a tabela de atributos estruturada exigida (obedecendo limite DBF de 10 caracteres)
+                    # Exporta os pontos ordenados se houver inserção manual
                     if lista_pontos_validados:
-                        gdf_pontos_shp = gdf_exportar_pontos[['nome_alvo', 'descricao', 'trecho', 'vulnerab', 'geometry']].rename(columns={
-                            'nome_alvo': 'nome',
-                            'vulnerab': 'vulnerab'
-                        })
+                        gdf_pontos_shp = gdf_exportar_pontos[['nome_alvo', 'trecho', 'vulnerab', 'descricao', 'geometry']].rename(columns={'nome_alvo': 'nome'})
                         gdf_pontos_shp.to_file(os.path.join(tmpdir, "alvos_pontos_inspecao.shp"), driver="ESRI Shapefile")
-                        st.success(f"🟢 Sucesso! Camada de {len(lista_pontos_validados)} pontos estruturada e integrada ao Shapefile.")
+                        st.success(f"🟢 Sucesso! Camada de {len(lista_pontos_validados)} pontos integrada ao Shapefile.")
+                        
+                        # =========================================================================
+                        # 🌟 NOVIDADE CENTRAL: MOTOR DE COMPOSIÇÃO DO ENCARTE DE MAPAS EM PDF 🌟
+                        # =========================================================================
+                        with st.spinner("Gerando encarte profissional de mapas em PDF..."):
+                            pdf_buffer = io.BytesIO()
+                            # Configura página no formato Paisagem (Landscape) igual ao mapa da Rumo
+                            pdf_canvas = canvas.Canvas(pdf_buffer, pagesize=landscape(letter))
+                            largura_pdf, altura_pdf = landscape(letter)
+                            
+                            for idx_pdf, pt_row in gdf_exportar_pontos.iterrows():
+                                # 1. Cria a figura do Matplotlib em alta definição (DPI alto)
+                                fig, ax = plt.subplots(figsize=(11, 7), dpi=150)
+                                
+                                # Converte o ponto e a rota para métrico (EPSG:3857) para casar com o Satélite
+                                gdf_ponto_focal = gpd.GeoDataFrame([pt_row], crs="EPSG:4326").to_crs(epsg=3857)
+                                pt_geom_m = gdf_ponto_focal.geometry.iloc[0]
+                                
+                                # Plota as camadas de apoio do app (se existirem na memória)
+                                if dados.get("ucs_wgs84") is not None:
+                                    dados["ucs_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='green', alpha=0.2, edgecolor='green', linewidth=0.5)
+                                if dados.get("tis_wgs84") is not None:
+                                    dados["tis_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='darkred', alpha=0.25, edgecolor='red', linewidth=0.5)
+                                if dados.get("riscos_wgs84") is not None:
+                                    dados["riscos_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='orange', alpha=0.2, edgecolor='orange', linewidth=0.5)
+                                if dados.get("rios_wgs84") is not None:
+                                    dados["rios_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='#1d70b8', linewidth=1.5)
+                                
+                                # Plota os trilhos da rota de vistoria
+                                dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='black', linewidth=2.5, zorder=3)
+                                dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='white', linewidth=1.0, linestyle='--', zorder=4)
+                                
+                                # Desenha o Marcador Focal (Estilo Alvo do Auditor)
+                                ax.scatter(pt_geom_m.x, pt_geom_m.y, color='#ff007f', s=180, edgecolor='white', linewidth=1.5, marker='⊙', zorder=5)
+                                
+                                # Define zoom fixo de aproximação (Janela tática de 1.8 km em torno do alvo)
+                                ax.set_xlim(pt_geom_m.x - 900, pt_geom_m.x + 900)
+                                ax.set_ylim(pt_geom_m.y - 600, pt_geom_m.y + 600)
+                                
+                                # 📡 CAPTURA RASTER: Baixa a imagem de satélite de alta resolução da ESRI
+                                try:
+                                    cx.add_basemap(ax, source=cx.providers.Esri.WorldImagery, attribution="")
+                                except Exception:
+                                    pass # Fallback caso haja instabilidade momentânea no servidor de mapas
+                                
+                                # Limpa eixos e grids cartográficos para visualização limpa
+                                ax.get_xaxis().set_visible(False)
+                                ax.get_y_axis().set_visible(False)
+                                
+                                # 🌟 ENGENHARIA MAPA: Injeção do Mini Mapa do Localizador (InsetInput) no canto superior direito
+                                ax_inset = ax.inset_axes([0.76, 0.72, 0.22, 0.26])
+                                dados["gdf_cronograma_wgs84"].to_crs(epsg=5880).plot(ax=ax_inset, color='black', weight=2)
+                                # Plota a bolinha de onde a equipe está dentro de todo o trajeto nacional
+                                gpd.GeoDataFrame(geometry=[pt_dict['geometry'] for pt_dict in lista_pontos_ordenados], crs="EPSG:4326").to_crs(epsg=5880).geometry.plot(ax=ax_inset, color='#ff007f', markersize=25)
+                                ax_max_bounds = dados["gdf_cronograma_wgs84"].to_crs(epsg=5880).total_bounds
+                                ax_increment = 10000 # Margem de 10km de contexto regional
+                                ax_inter_bbox = (bbox_box[0], bbox_box[1], bbox_box[2], bbox_box[3]) if bbox_box else None
+                                ax_ins_box = box(*gdf_corr_m.to_crs(epsg=5880).geometry.iloc[0].bounds)
+                                ax_inset_bounds = ax_ins_bounds = gdf_corr_m.geometry.iloc[0].bounds
+                                ax_inset_margin = (ax_ins_bounds[2] - ax_inspex_b[0]) * 0.1
+                                
+                                # Otimização do mini-mapa invisível
+                                ax_pt_m_proj = dados["rota_unificada_m"].project(ponto_m)
+                                ax_m_buffer = dados["rota_unificada_m"].buffer(30000)
+                                ax_inset_bbox = ax_buffer_wgs = gdf_corr_m.buffer(40000).geometry.iloc[0].bounds
+                                
+                                # Para o mini-mapa não travar, fixamos as coordenadas de bounding box do estado simplificado
+                                ax_mancha_est = estados[estados.intersects(m_row['geometry'])].to_crs(epsg=5880)
+                                if not ax_m_mancha := ax_manchas_urbanas if not estados_interceptados.empty else None:
+                                    ax_mancha = estados_interceptados.to_crs(epsg=5880)
+                                    
+                                ax_shape_m = gpd.GeoDataFrame(geometry=[dados["rota_unificada_m"]], crs="EPSG:5880")
+                                ax_shape_m.plot(ax=ax_entry:=folium.Map().add_to(m) if False else ax_inset, color='gray', linewidth=1)
+                                gpd.GeoDataFrame(geometry=[ponto_m], crs="EPSG:5880").plot(ax=ax_inset, color='red', markersize=35, marker='*')
+                                ax_inset.set_xlim(ponto_m.x - 50000, ponto_m.x + 50000)
+                                ax_inset.set_ylim(ponto_m.y - 50000, ponto_m.y + 50000)
+                                ax_inset.get_xaxis().set_visible(False)
+                                ax_inset.get_y_axis().set_visible(False)
+                                ax_inset.patch.set_edgecolor('white')
+                                ax_inset.patch.set_linewidth(1.5)
+                                
+                                # Título Técnico Institucional e Metadados do Alvo
+                                plt.title(f"📍 {pt_row['nome_alvo']} — {pt_row['descricao']}\nVulnerabilidade: {pt_row['vulnerab']} ({pt_row['trecho']})", 
+                                          fontsize=12, color='white', weight='bold', backgroundcolor='#1e1e1e', pad=10, loc='left')
+                                
+                                # Legenda Cartográfica Personalizada (Bottom Panel)
+                                text_legenda = (
+                                    "LEGENDA:  ── Ferrovia (Eixo Central)   ⊙ Ponto de Parada Focal   "
+                                    "■ Hidrografia (ANA)   ■ Unidade de Conservação   ■ Terra Indígena   ■ Risco Geológico (CPRM)"
+                                )
+                                fig.text(0.02, 0.02, text_legenda, fontsize=7.5, weight='semibold', color='white', backgroundcolor='#1e1e1e')
+                                
+                                # Transforma o plot do Matplotlib em imagem de memória e joga no PDF
+                                fig.patch.set_facecolor('#1e1e1e')
+                                plt.tight_layout()
+                                img_buf = io.BytesIO()
+                                plt.savefig(img_buf, format='png', facecolor=fig.get_facecolor(), edgecolor='none', bbox_inches='tight')
+                                img_buf.seek(0)
+                                plt.close(fig)
+                                
+                                # Renderiza a imagem cobrindo a página inteira do PDF de forma limpa
+                                from reportlab.lib.utils import ImageReader
+                                image_reportlab = ImageReader(img_buf)
+                                pdf_canvas.drawImage(image_reportlab, 15, 15, width=largura_pdf-30, height=altura_pdf-30)
+                                pdf_canvas.showPage()
+                            
+                            # Salva o arquivo final
+                            pdf_canvas.save()
+                            pdf_buffer.seek(0)
+                            dados_binarios_pdf = pdf_buffer.getvalue()
+                            
+                        # Disponibiliza o botão de download do PDF gerado ao lado do ZIP
+                        st.download_button(
+                            label="📄 Baixar Encarte de Mapas Táticos (PDF de Campo)",
+                            data=dados_binarios_pdf,
+                            file_name="encarte_vistorias_ibama.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
                     
                     # Consolida o ZIP
                     caminho_zip = os.path.join(tmpdir, "plano_vistoria_via_prev.zip")
