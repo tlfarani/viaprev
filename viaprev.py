@@ -701,7 +701,7 @@ if st.session_state.dados_calculados is not None:
                                     pass
                                 
                                 ax.get_xaxis().set_visible(False)
-                                ax.get_y_axis().set_visible(False)
+                                ax.get_yaxis().set_visible(False) # 🌟 CORRIGIDO: get_yaxis() tudo junto
                                 
                                 # INSET MAP (Mini mapa localizador superior direito)
                                 ax_inset = ax.inset_axes([0.76, 0.72, 0.22, 0.26])
@@ -715,7 +715,7 @@ if st.session_state.dados_calculados is not None:
                                 ax_inset.set_xlim(ponto_m_proj.x - 60000, ponto_m_proj.x + 60000)
                                 ax_inset.set_ylim(ponto_m_proj.y - 60000, ponto_m_proj.y + 60000)
                                 ax_inset.get_xaxis().set_visible(False)
-                                ax_inset.get_y_axis().set_visible(False)
+                                ax_inset.get_yaxis().set_visible(False) # 🌟 CORRIGIDO: get_yaxis() tudo junto
                                 
                                 plt.title(f"📍 {pt_row['nome_alvo']} — {pt_row['descricao']}\nVulnerabilidade: {pt_row['vulnerab']} ({pt_row['trecho']})", 
                                           fontsize=11, color='white', weight='bold', backgroundcolor='#1e1e1e', pad=8, loc='left')
