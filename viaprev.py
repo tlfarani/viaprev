@@ -674,7 +674,7 @@ if st.session_state.dados_calculados is not None:
                         gdf_pontos_shp.to_file(os.path.join(tmpdir, "alvos_pontos_inspecao.shp"), driver="ESRI Shapefile")
                         st.success(f"🟢 Sucesso! Camada de {len(lista_pontos_validados)} pontos integrada ao Shapefile.")
                         
-                        # --- GERAÇÃO DO PDF DE MAPAS TÁTICOS ---
+                        # --- GERAÇÃO DO PDF DE MAPAS TÁTICOS (VERSÃO ULTRA-REFINADA) ---
                         with st.spinner("Gerando encarte profissional de mapas em PDF..."):
                             pdf_buffer = io.BytesIO()
                             pdf_canvas = canvas.Canvas(pdf_buffer, pagesize=landscape(letter))
@@ -685,56 +685,85 @@ if st.session_state.dados_calculados is not None:
                                 gdf_ponto_focal = gpd.GeoDataFrame([pt_row], crs="EPSG:4326").to_crs(epsg=3857)
                                 pt_geom_m = gdf_ponto_focal.geometry.iloc[0]
                                 
-                                # Plot de apoio se as camadas existirem
-                                if dados.get("ucs_wgs84") is not None:
-                                    dados["ucs_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='green', alpha=0.2)
-                                if dados.get("tis_wgs84") is not None:
-                                    dados["tis_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='darkred', alpha=0.25)
-                                if dados.get("riscos_wgs84") is not None:
-                                    dados["riscos_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='orange', alpha=0.2)
-                                if dados.get("rios_wgs84") is not None:
-                                    dados["rios_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='#1d70b8', linewidth=1.5)
+                                # 🌟 1. RENDERIZAÇÃO DAS CAMADAS VETORIAIS DE APOIO AO LONGO DA VIA (VIBRANTES)
+                                if dados.get("ucs_wgs84") is not None and not dados["ucs_wgs84"].empty:
+                                    dados["ucs_wgs84"].to_crs(epsg=3857).plot(
+                                        ax=ax, facecolor='#2ecc71', edgecolor='#27ae60', alpha=0.35, linewidth=1, zorder=2
+                                    )
+                                if dados.get("tis_wgs84") is not None and not dados["tis_wgs84"].empty:
+                                    dados["tis_wgs84"].to_crs(epsg=3857).plot(
+                                        ax=ax, facecolor='#e74c3c', edgecolor='#c0392b', alpha=0.4, linewidth=1, zorder=2
+                                    )
+                                if dados.get("riscos_wgs84") is not None and not dados["riscos_wgs84"].empty:
+                                    dados["riscos_wgs84"].to_crs(epsg=3857).plot(
+                                        ax=ax, facecolor='#f1c40f', edgecolor='#f39c12', alpha=0.35, linewidth=1, zorder=2
+                                    )
+                                if dados.get("rios_wgs84") is not None and not dados["rios_wgs84"].empty:
+                                    dados["rios_wgs84"].to_crs(epsg=3857).plot(
+                                        ax=ax, color='#00d2ff', linewidth=1.8, alpha=0.8, zorder=2
+                                    )
                                 
-                                dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='black', linewidth=2.5, zorder=3)
-                                dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='white', linewidth=1.0, linestyle='--', zorder=4)
+                                # Desenha os trilhos com suavização (evita serrilhado)
+                                dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='black', linewidth=3.5, zorder=3, antialiased=True)
+                                dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='white', linewidth=1.2, linestyle='--', zorder=4, antialiased=True)
                                 
-                                # Desenha o ponto alvo
-                                ax.scatter(pt_geom_m.x, pt_geom_m.y, color='#ff007f', s=150, edgecolor='white', linewidth=1.5, zorder=5)
+                                # Desenha o marcador do Ponto de Vistoria
+                                ax.scatter(pt_geom_m.x, pt_geom_m.y, color='#ff007f', s=160, edgecolor='white', linewidth=1.5, zorder=5)
                                 
+                                # Enquadramento tático ao redor do ponto (Janela aproximada de 2km)
                                 ax.set_xlim(pt_geom_m.x - 1000, pt_geom_m.x + 1000)
                                 ax.set_ylim(pt_geom_m.y - 700, pt_geom_m.y + 700)
                                 
+                                # Adiciona o fundo de imagem de Satélite na tela principal
                                 try:
                                     cx.add_basemap(ax, source=cx.providers.Esri.WorldImagery, attribution="")
                                 except Exception:
                                     pass
                                 
                                 ax.get_xaxis().set_visible(False)
-                                ax.get_yaxis().set_visible(False) # 🌟 CORRIGIDO: get_yaxis() tudo junto
+                                ax.get_yaxis().set_visible(False)
                                 
-                                # INSET MAP (Mini mapa localizador superior direito)
-                                ax_inset = ax.inset_axes([0.76, 0.72, 0.22, 0.26])
-                                dados["gdf_cronograma_wgs84"].to_crs(epsg=5880).plot(ax=ax_inset, color='black', linewidth=1.5)
+                                # 🌟 2. NOVO MINI-MAPA LOCALIZADOR COM OPENSTREETMAPS E ANTI-ALIASED
+                                ax_inset = ax.inset_axes([0.74, 0.68, 0.24, 0.30]) # Ajuste leve de tamanho e posição
                                 
-                                # Pega a posição projetada do ponto atual para o mini-mapa
-                                gdf_pt_m_proj = gpd.GeoDataFrame([pt_row], crs="EPSG:4326").to_crs(epsg=5880)
-                                ponto_m_proj = gdf_pt_m_proj.geometry.iloc[0]
-                                gdf_pt_m_proj.plot(ax=ax_inset, color='#ff007f', markersize=40, marker='*')
+                                # Plot de toda a malha no mini-mapa em 3857 para casar perfeitamente com o OSM
+                                dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(
+                                    ax=ax_inset, color='#2c3e50', linewidth=3.0, zorder=3, antialiased=True
+                                )
                                 
-                                ax_inset.set_xlim(ponto_m_proj.x - 60000, ponto_m_proj.x + 60000)
-                                ax_inset.set_ylim(ponto_m_proj.y - 60000, ponto_m_proj.y + 60000)
+                                # Desenha o indicador de posição atual (Estrela operacional chamativa)
+                                gdf_ponto_focal.plot(ax=ax_inset, color='#ff007f', markersize=80, marker='*', edgecolor='white', linewidth=0.8, zorder=5)
+                                
+                                # Define uma abrangência regional de 50km em torno do alvo para dar contexto geográfico
+                                ax_inset.set_xlim(pt_geom_m.x - 50000, pt_geom_m.x + 50000)
+                                ax_inset.set_ylim(pt_geom_m.y - 50000, pt_geom_m.y + 50000)
+                                
+                                # Injeta o fundo do OpenStreetMap nativo no mini-mapa
+                                try:
+                                    cx.add_basemap(ax_inset, source=cx.providers.OpenStreetMap.Mapnik, attribution="")
+                                except Exception:
+                                    pass
+                                
                                 ax_inset.get_xaxis().set_visible(False)
-                                ax_inset.get_yaxis().set_visible(False) # 🌟 CORRIGIDO: get_yaxis() tudo junto
+                                ax_inset.get_yaxis().set_visible(False)
                                 
-                                plt.title(f"📍 {pt_row['nome_alvo']} — {pt_row['descricao']}\nVulnerabilidade: {pt_row['vulnerab']} ({pt_row['trecho']})", 
+                                # Aplica uma moldura preta elegante e nítida ao redor do mini-mapa
+                                for spine in ax_inset.spines.values():
+                                    spine.set_edgecolor('black')
+                                    spine.set_linewidth(1.2)
+                                
+                                # Configuração do Cabeçalho e Metadados do Layout
+                                plt.title(f"📍 {pt_row['nome_alvo']} — {pt_row['descricao']}\nVulnerabilidade Local: {pt_row['vulnerab']} ({pt_row['trecho']})", 
                                           fontsize=11, color='white', weight='bold', backgroundcolor='#1e1e1e', pad=8, loc='left')
                                 
-                                text_legenda = "LEGENDA:  ── Ferrovia   ● Ponto Focal   ■ Hidrografia   ■ UC   ■ Terra Indígena   ■ Risco Geológico"
+                                # Barra de Legendas Cartográficas Institucionais (Rodapé)
+                                text_legenda = "LEGENDA:  ── Ferrovia   ● Ponto Focal In Loco   ■ Hidrografia (Canais/Rios)   ■ UC   ■ Terra Indígena (TI)   ■ Área de Risco CPRM"
                                 fig.text(0.02, 0.02, text_legenda, fontsize=7, weight='semibold', color='white', backgroundcolor='#1e1e1e')
                                 
                                 fig.patch.set_facecolor('#1e1e1e')
                                 plt.tight_layout()
                                 
+                                # Converte o gráfico Matplotlib hígido em binário para escrita no PDF
                                 img_buf = io.BytesIO()
                                 plt.savefig(img_buf, format='png', facecolor=fig.get_facecolor(), edgecolor='none', bbox_inches='tight')
                                 img_buf.seek(0)
