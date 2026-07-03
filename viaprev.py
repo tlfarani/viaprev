@@ -696,7 +696,7 @@ if st.session_state.dados_calculados is not None:
                                     dados["tis_wgs84"].to_crs(epsg=3857).plot(
                                         ax=ax, facecolor='none', edgecolor='#8B4513', hatch='/', linewidth=1.0, alpha=0.8, zorder=2
                                     )
-                                    )
+                                    
                                 if dados.get("riscos_wgs84") is not None and not dados["riscos_wgs84"].empty:
                                     # Padrão de micropontos (.) em amarelo, eliminando conflito de linhas
                                     dados["riscos_wgs84"].to_crs(epsg=3857).plot(
