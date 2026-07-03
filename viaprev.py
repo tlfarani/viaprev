@@ -685,25 +685,28 @@ if st.session_state.dados_calculados is not None:
                                 gdf_ponto_focal = gpd.GeoDataFrame([pt_row], crs="EPSG:4326").to_crs(epsg=3857)
                                 pt_geom_m = gdf_ponto_focal.geometry.iloc[0]
                                 
-                                # 🌟 1. APLICAÇÃO DAS RACHURAS ESPECÍFICAS (FUNDO TRANSPARENTE PARA NÃO OBSCURECER O SATÉLITE)
+                                # 🌟 1. APLICAÇÃO DE RACHURAS ESPARSAS (MÁXIMA TRANSPARÊNCIA PARA O SATÉLITE)
                                 if dados.get("ucs_wgs84") is not None and not dados["ucs_wgs84"].empty:
+                                    # Rachura simples invertida (\) bem espaçada
                                     dados["ucs_wgs84"].to_crs(epsg=3857).plot(
-                                        ax=ax, facecolor='none', edgecolor='white', hatch='\\\\\\', linewidth=0.8, zorder=2
+                                        ax=ax, facecolor='none', edgecolor='white', hatch='\\', linewidth=1.0, alpha=0.8, zorder=2
                                     )
                                 if dados.get("tis_wgs84") is not None and not dados["tis_wgs84"].empty:
+                                    # Rachura simples (/) bem espaçada em vermelho vivo
                                     dados["tis_wgs84"].to_crs(epsg=3857).plot(
-                                        ax=ax, facecolor='none', edgecolor='red', hatch='///', linewidth=0.8, zorder=2
+                                        ax=ax, facecolor='none', edgecolor='#ff3333', hatch='/', linewidth=1.0, alpha=0.8, zorder=2
                                     )
                                 if dados.get("riscos_wgs84") is not None and not dados["riscos_wgs84"].empty:
+                                    # Padrão de micropontos (.) em amarelo, eliminando conflito de linhas
                                     dados["riscos_wgs84"].to_crs(epsg=3857).plot(
-                                        ax=ax, facecolor='none', edgecolor='yellow', hatch='|||', linewidth=0.8, zorder=2
+                                        ax=ax, facecolor='none', edgecolor='#f1c40f', hatch='.', linewidth=0.8, alpha=0.9, zorder=2
                                     )
                                 if dados.get("rios_wgs84") is not None and not dados["rios_wgs84"].empty:
                                     dados["rios_wgs84"].to_crs(epsg=3857).plot(
                                         ax=ax, color='#00d2ff', linewidth=1.5, alpha=0.8, zorder=2
                                     )
                                 
-                                # Desenha a ferrovia
+                                # Desenha a ferrovia (Contraste preto e branco sobre o satélite)
                                 dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='black', linewidth=3.5, zorder=3, antialiased=True)
                                 dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='white', linewidth=1.2, linestyle='--', zorder=4, antialiased=True)
                                 
@@ -722,28 +725,25 @@ if st.session_state.dados_calculados is not None:
                                 ax.get_xaxis().set_visible(False)
                                 ax.get_yaxis().set_visible(False)
                                 
-                                # 🌟 2. CONSTRUÇÃO DA LEGENDA CARTOGRÁFICA GRÁFICA (BOX FLUTUANTE)
+                                # 🌟 2. ATUALIZAÇÃO DOS GRÁFICOS DA LEGENDA EM MOLDURA FLUTUANTE
                                 import matplotlib.patches as mpatches
                                 import matplotlib.lines as mlines
                                 
-                                # Elementos básicos permanentes da legenda
                                 itens_legenda = [
                                     mlines.Line2D([0], [0], color='black', linewidth=3, label='Ferrovia (Trilhos)'),
                                     mlines.Line2D([0], [0], color='white', linewidth=1.2, linestyle='--', label='Eixo Central da Via'),
                                     mlines.Line2D([0], [0], marker='o', color='none', markerfacecolor='#ff007f', markeredgecolor='white', markersize=9, label='Alvo In Loco Focal')
                                 ]
                                 
-                                # Inclui as camadas condicionais com seus respectivos padrões visuais reais
                                 if dados.get("rios_wgs84") is not None and not dados["rios_wgs84"].empty:
                                     itens_legenda.append(mlines.Line2D([0], [0], color='#00d2ff', linewidth=2, label='Hidrografia (Canais/Rios)'))
                                 if dados.get("ucs_wgs84") is not None and not dados["ucs_wgs84"].empty:
-                                    itens_legenda.append(mpatches.Patch(facecolor='none', edgecolor='white', hatch='\\\\\\', label='Unidade de Conservação (Branco)'))
+                                    itens_legenda.append(mpatches.Patch(facecolor='none', edgecolor='white', hatch='\\', label='Unidade de Conservação (Esparso)'))
                                 if dados.get("tis_wgs84") is not None and not dados["tis_wgs84"].empty:
-                                    itens_legenda.append(mpatches.Patch(facecolor='none', edgecolor='red', hatch='///', label='Terra Indígena (Vermelho)'))
+                                    itens_legenda.append(mpatches.Patch(facecolor='none', edgecolor='#ff3333', hatch='/', label='Terra Indígena (Esparso)'))
                                 if dados.get("riscos_wgs84") is not None and not dados["riscos_wgs84"].empty:
-                                    itens_legenda.append(mpatches.Patch(facecolor='none', edgecolor='yellow', hatch='|||', label='Área de Risco CPRM (Amarelo)'))
+                                    itens_legenda.append(mpatches.Patch(facecolor='none', edgecolor='#f1c40f', hatch='.', label='Área de Risco CPRM (Pontilhado)'))
                                 
-                                # Desenha a caixa de legenda no canto inferior esquerdo sobre o mapa
                                 leg = ax.legend(
                                     handles=itens_legenda,
                                     loc='lower left',
@@ -757,7 +757,7 @@ if st.session_state.dados_calculados is not None:
                                 )
                                 plt.setp(leg.get_title(), color='white', weight='bold')
                                 
-                                # MINI-MAPA LOCALIZADOR (CANTO SUPERIOR DIREITO)
+                                # MINI-MAPA LOCALIZADOR (Mantido estável com OpenStreetMap)
                                 ax_inset = ax.inset_axes([0.74, 0.68, 0.24, 0.30])
                                 dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(
                                     ax=ax_inset, color='#2c3e50', linewidth=2.5, zorder=3, antialiased=True
@@ -778,14 +778,12 @@ if st.session_state.dados_calculados is not None:
                                     spine.set_edgecolor('black')
                                     spine.set_linewidth(1.2)
                                 
-                                # Configuração do Cabeçalho do Layout
                                 plt.title(f"📍 {pt_row['nome_alvo']} — {pt_row['descricao']}\nVulnerabilidade Local: {pt_row['vulnerab']} ({pt_row['trecho']})", 
                                           fontsize=11, color='white', weight='bold', backgroundcolor='#1e1e1e', pad=8, loc='left')
                                 
                                 fig.patch.set_facecolor('#1e1e1e')
                                 plt.tight_layout()
                                 
-                                # Converte em imagem de memória para ReportLab
                                 img_buf = io.BytesIO()
                                 plt.savefig(img_buf, format='png', facecolor=fig.get_facecolor(), edgecolor='none', bbox_inches='tight')
                                 img_buf.seek(0)
