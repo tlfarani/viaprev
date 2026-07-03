@@ -537,13 +537,13 @@ if st.session_state.dados_calculados is not None:
                 st.write("")
             
             # 🔽 ADICIONE ESTE BLOCO ABAIXO DO FIM DO LOOP PARA GERAR A CESTA E O DOWNLOAD_BUTTON 🔽
-            # 🔍 SUBSTITUA TODO O BLOCO FINAL DA CESTA DE ALVOS POR ESTA VERSÃO INTELIGENTE 🔍
+            # 🔍 SUBSTITUA EXATAMENTE TODO O BLOCO DA CESTA ATÉ A ENTRADA DA COL_MAPA POR ISTO 🔍
             st.write("---")
             st.write("### 📦 Cesta de Alvos Selecionados para Campo")
             
             lista_linhas = []
             
-            # 1. Agrupa as faixas de 1km marcadas pelo usuário
+            # 1. Agrupa las faixas de 1km marcadas pelo usuário
             if gdf_micros_wgs84 is not None and not gdf_micros_wgs84.empty:
                 for _, m_row in gdf_micros_wgs84.iterrows():
                     chk_key = f"sel_{m_row['id_dia'].replace(' ', '_')}_{m_row['km_inicial']:.1f}"
@@ -564,7 +564,8 @@ if st.session_state.dados_calculados is not None:
                     'trecho': 'Trecho Referência', 'km_inicio': 'KM Inicial', 'score': 'Score Risco', 'interf': 'Fatores Críticos'
                 }), use_container_width=True, hide_index=True)
             
-            # 2. Área de inserção livre e desvinculada para coordenadas refinadas no QGIS
+            # 2. Área de inserção livre para coordenadas refinadas no QGIS
+            # 🌟 VERSÃO PROTEGIDA CONTRA ERROS DE LATITUDE/LONGITUDE OUTLIERS 🌟
             st.markdown("##### 📍 Pontos de Parada Específicos (Mapeamento Refinado)")
             st.caption("Cole abaixo os alvos identificados no QGIS (um por linha, no formato: **latitude, longitude, descrição**). O sistema ordenará e vinculará o trecho/score automaticamente.")
             
@@ -582,19 +583,16 @@ if st.session_state.dados_calculados is not None:
                     if not linha_raw.strip(): continue
                     if "," in linha_raw:
                         try:
-                            # Trata o corte por vírgulas aceitando espaços extras
                             partes = [p.strip() for p in linha_raw.split(",")]
                             if len(partes) < 2: continue
                             
                             lat_f = float(partes[0])
                             lon_f = float(partes[1])
-                            
-                            # Captura a descrição customizada se informada, caso contrário gera um texto padrão
                             desc_f = partes[2] if len(partes) >= 3 else "Ponto de Inspecao"
                             
                             ponto_wgs = Point(lon_f, lat_f)
                             
-                            # Transforma para metros (EPSG:5880) para projetar sobre a malha ferroviária
+                            # Transforma para metros para projetar sobre a linha ferroviária
                             gdf_pt_tmp = gpd.GeoDataFrame(geometry=[ponto_wgs], crs="EPSG:4326").to_crs(epsg=5880)
                             ponto_m = gdf_pt_tmp.geometry.iloc[0]
                             
@@ -602,21 +600,24 @@ if st.session_state.dados_calculados is not None:
                                 st.warning("⚠️ Por favor, clique em 'Calcular Rota' na barra lateral primeiro para calibrar o motor de ordenação.")
                                 st.stop()
                                 
-                            # Mede a distância linear acumulada do ponto em relação ao início do traçado para ordenação
+                            # 🌟 TRAVA DE SEGURANÇA SENSORIZADA 🌟
+                            # Calcula a distância perpendicular real do ponto até os trilhos em metros
+                            dist_real_trilhos_m = dados["rota_unificada_m"].distance(ponto_m)
+                            
+                            if dist_real_trilhos_m > 30000: # Se estiver a mais de 30 km de distância real da ferrovia
+                                st.error(f"❌ **Erro de Localização no alvo '{desc_f}':** Este ponto está localizado a {dist_real_trilhos_m/1000:.1f} km fora da rota ferroviária calculada! Verifique se você não esqueceu o sinal de menos (-) na Latitude.")
+                                continue # Pula este ponto corrompido para não quebrar o PDF e o Shapefile
+                                
                             distancia_linha = dados["rota_unificada_m"].project(ponto_m)
                             
-                            # 🌟 INTELIGÊNCIA GEOGRÁFICA REFINADA: Vincula o ponto ao HOTSPOT de 1 km mais próximo
+                            # Vincula o ponto ao HOTSPOT de 1 km mais próximo
                             gdf_micros = dados.get("gdf_top_micros_wgs84")
-                            
                             if gdf_micros is not None and not gdf_micros.empty:
-                                # Procura o hotspot de 1 km mais próximo do ponto inserido
                                 idx_mais_proximo = gdf_micros.geometry.distance(ponto_wgs).idxmin()
                                 row_micro = gdf_micros.loc[idx_mais_proximo]
-                                
                                 trecho_detectado = row_micro['id_dia'].replace("Dia", "Trecho")
                                 score_detectado = round(float(row_micro['score_num']), 2)
                             else:
-                                # Fallback de segurança: se não houver hotspots, usa o macro-trecho
                                 gdf_crono = dados["gdf_cronograma_wgs84"]
                                 idx_mais_proximo = gdf_crono.geometry.distance(ponto_wgs).idxmin()
                                 row_crono = gdf_crono.loc[idx_mais_proximo]
@@ -633,15 +634,13 @@ if st.session_state.dados_calculados is not None:
                                 'dist_prog': distancia_linha
                             })
                         except ValueError:
-                            st.error(f"⚠️ Formato numérico inválido na linha: `{linha_raw}`. Use o padrão decimal com pontos.")
+                            st.error(f"⚠️ Formato numérico inválido na linha: `{linha_raw}`. Use o padrão decimal.")
                         except Exception as e:
-                            st.error(f"💥 Erro geométrico ao processar a linha `{linha_raw}`: {e}")
+                            st.error(f"💥 Erro ao processar a linha `{linha_raw}`: {e}")
             
-            # Se houver pontos cadastrados, aplica a ordenação topológica crescente
+            # Aplica ordenação se houver pontos cadastrados
             if lista_pontos_validados:
                 lista_pontos_ordenados = sorted(lista_pontos_validados, key=lambda x: x['dist_prog'])
-                
-                # Nomeia sequencialmente (Ponto 1, Ponto 2...) com base na distância da linha
                 for idx_ord, pt_dict in enumerate(lista_pontos_ordenados):
                     pt_dict['nome_alvo'] = f"Ponto {idx_ord + 1}"
                 
@@ -652,43 +651,132 @@ if st.session_state.dados_calculados is not None:
                     'nome_alvo': 'Identificador', 'descricao': 'Descrição', 'trecho': 'Trecho Vinculado', 'vulnerab': 'Índice Vulnerabilidade'
                 }), use_container_width=True, hide_index=True)
             
-            # 3. Motor de compilação e empacotamento do ZIP
+            # 3. Motor de compilação e empacotamento dos outputs (ZIP e PDF)
             if lista_linhas or lista_pontos_validados:
                 import tempfile
                 import zipfile
+                import matplotlib.pyplot as plt
+                import contextily as cx
+                from reportlab.lib.pagesizes import letter, landscape
+                from reportlab.pdfgen import canvas
+                from reportlab.lib.utils import ImageReader
+                import io
+                
+                dados_binarios_pdf = None
                 
                 with tempfile.TemporaryDirectory() as tmpdir:
-                    # Grava as Faixas Lineares de 1km
                     if lista_linhas:
                         gdf_linhas_shp = gdf_exportar_linhas.rename(columns={'km_inicio': 'km_start'})
                         gdf_linhas_shp.to_file(os.path.join(tmpdir, "alvos_faixas_via.shp"), driver="ESRI Shapefile")
                     
-                    # Grava os Pontos com a tabela de atributos estruturada exigida (obedecendo limite DBF de 10 caracteres)
                     if lista_pontos_validados:
-                        gdf_pontos_shp = gdf_exportar_pontos[['nome_alvo', 'descricao', 'trecho', 'vulnerab', 'geometry']].rename(columns={
-                            'nome_alvo': 'nome',
-                            'vulnerab': 'vulnerab'
-                        })
+                        gdf_pontos_shp = gdf_exportar_pontos[['nome_alvo', 'descricao', 'trecho', 'vulnerab', 'geometry']].rename(columns={'nome_alvo': 'nome'})
                         gdf_pontos_shp.to_file(os.path.join(tmpdir, "alvos_pontos_inspecao.shp"), driver="ESRI Shapefile")
-                        st.success(f"🟢 Sucesso! Camada de {len(lista_pontos_validados)} pontos estruturada e integrada ao Shapefile.")
+                        st.success(f"🟢 Sucesso! Camada de {len(lista_pontos_validados)} pontos integrada ao Shapefile.")
+                        
+                        # --- GERAÇÃO DO PDF DE MAPAS TÁTICOS ---
+                        with st.spinner("Gerando encarte profissional de mapas em PDF..."):
+                            pdf_buffer = io.BytesIO()
+                            pdf_canvas = canvas.Canvas(pdf_buffer, pagesize=landscape(letter))
+                            largura_pdf, altura_pdf = landscape(letter)
+                            
+                            for idx_pdf, pt_row in gdf_exportar_pontos.iterrows():
+                                fig, ax = plt.subplots(figsize=(11, 7), dpi=150)
+                                gdf_ponto_focal = gpd.GeoDataFrame([pt_row], crs="EPSG:4326").to_crs(epsg=3857)
+                                pt_geom_m = gdf_ponto_focal.geometry.iloc[0]
+                                
+                                # Plot de apoio se as camadas existirem
+                                if dados.get("ucs_wgs84") is not None:
+                                    dados["ucs_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='green', alpha=0.2)
+                                if dados.get("tis_wgs84") is not None:
+                                    dados["tis_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='darkred', alpha=0.25)
+                                if dados.get("riscos_wgs84") is not None:
+                                    dados["riscos_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='orange', alpha=0.2)
+                                if dados.get("rios_wgs84") is not None:
+                                    dados["rios_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='#1d70b8', linewidth=1.5)
+                                
+                                dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='black', linewidth=2.5, zorder=3)
+                                dados["gdf_cronograma_wgs84"].to_crs(epsg=3857).plot(ax=ax, color='white', linewidth=1.0, linestyle='--', zorder=4)
+                                
+                                # Desenha o ponto alvo
+                                ax.scatter(pt_geom_m.x, pt_geom_m.y, color='#ff007f', s=150, edgecolor='white', linewidth=1.5, zorder=5)
+                                
+                                ax.set_xlim(pt_geom_m.x - 1000, pt_geom_m.x + 1000)
+                                ax.set_ylim(pt_geom_m.y - 700, pt_geom_m.y + 700)
+                                
+                                try:
+                                    cx.add_basemap(ax, source=cx.providers.Esri.WorldImagery, attribution="")
+                                except Exception:
+                                    pass
+                                
+                                ax.get_xaxis().set_visible(False)
+                                ax.get_yaxis().set_visible(False) # 🌟 CORRIGIDO: get_yaxis() tudo junto
+                                
+                                # INSET MAP (Mini mapa localizador superior direito)
+                                ax_inset = ax.inset_axes([0.76, 0.72, 0.22, 0.26])
+                                dados["gdf_cronograma_wgs84"].to_crs(epsg=5880).plot(ax=ax_inset, color='black', linewidth=1.5)
+                                
+                                # Pega a posição projetada do ponto atual para o mini-mapa
+                                gdf_pt_m_proj = gpd.GeoDataFrame([pt_row], crs="EPSG:4326").to_crs(epsg=5880)
+                                ponto_m_proj = gdf_pt_m_proj.geometry.iloc[0]
+                                gdf_pt_m_proj.plot(ax=ax_inset, color='#ff007f', markersize=40, marker='*')
+                                
+                                ax_inset.set_xlim(ponto_m_proj.x - 60000, ponto_m_proj.x + 60000)
+                                ax_inset.set_ylim(ponto_m_proj.y - 60000, ponto_m_proj.y + 60000)
+                                ax_inset.get_xaxis().set_visible(False)
+                                ax_inset.get_yaxis().set_visible(False) # 🌟 CORRIGIDO: get_yaxis() tudo junto
+                                
+                                plt.title(f"📍 {pt_row['nome_alvo']} — {pt_row['descricao']}\nVulnerabilidade: {pt_row['vulnerab']} ({pt_row['trecho']})", 
+                                          fontsize=11, color='white', weight='bold', backgroundcolor='#1e1e1e', pad=8, loc='left')
+                                
+                                text_legenda = "LEGENDA:  ── Ferrovia   ● Ponto Focal   ■ Hidrografia   ■ UC   ■ Terra Indígena   ■ Risco Geológico"
+                                fig.text(0.02, 0.02, text_legenda, fontsize=7, weight='semibold', color='white', backgroundcolor='#1e1e1e')
+                                
+                                fig.patch.set_facecolor('#1e1e1e')
+                                plt.tight_layout()
+                                
+                                img_buf = io.BytesIO()
+                                plt.savefig(img_buf, format='png', facecolor=fig.get_facecolor(), edgecolor='none', bbox_inches='tight')
+                                img_buf.seek(0)
+                                plt.close(fig)
+                                
+                                image_reportlab = ImageReader(img_buf)
+                                pdf_canvas.drawImage(image_reportlab, 15, 15, width=largura_pdf-30, height=altura_pdf-30)
+                                pdf_canvas.showPage()
+                            
+                            pdf_canvas.save()
+                            pdf_buffer.seek(0)
+                            dados_binarios_pdf = pdf_buffer.getvalue()
                     
-                    # Consolida o ZIP
+                    # Compactação física do arquivo ZIP contendo as camadas .shp
                     caminho_zip = os.path.join(tmpdir, "plano_vistoria_via_prev.zip")
                     with zipfile.ZipFile(caminho_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
                         for arquivo_pasta in os.listdir(tmpdir):
-                            if not arquivo_pasta.endswith('.zip'):
+                            if not arquivo_pasta.endswith('.zip') and not arquivo_pasta.endswith('.pdf'):
                                 zipf.write(os.path.join(tmpdir, arquivo_pasta), arquivo_pasta)
                     
                     with open(caminho_zip, "rb") as f_zip:
                         dados_binarios_zip = f_zip.read()
                 
-                st.download_button(
-                    label="📥 Baixar Pacote de Campo (Shapefile ZIP)",
-                    data=dados_binarios_zip,
-                    file_name="planejamento_vistoria_ibama.zip",
-                    mime="application/zip",
-                    use_container_width=True
-                )
+                # Renderização final das duas colunas de download independentes
+                col_down_shp, col_down_pdf = st.columns(2)
+                with col_down_shp:
+                    st.download_button(
+                        label="📥 Baixar Pacote GIS (Shapefile ZIP)",
+                        data=dados_binarios_zip,
+                        file_name="planejamento_vistoria_ibama.zip",
+                        mime="application/zip",
+                        use_container_width=True
+                    )
+                if dados_binarios_pdf is not None:
+                    with col_down_pdf:
+                        st.download_button(
+                            label="📄 Baixar Encarte de Mapas Táticos (PDF)",
+                            data=dados_binarios_pdf,
+                            file_name="encarte_vistorias_ibama.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
             else:
                 st.info("💡 Selecione as faixas desejadas acima ou cole uma lista de coordenadas para habilitar o download do pacote de campo.")
         
