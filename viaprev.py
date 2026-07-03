@@ -692,9 +692,10 @@ if st.session_state.dados_calculados is not None:
                                         ax=ax, facecolor='none', edgecolor='white', hatch='\\', linewidth=1.0, alpha=0.8, zorder=2
                                     )
                                 if dados.get("tis_wgs84") is not None and not dados["tis_wgs84"].empty:
-                                    # Rachura simples (/) bem espaçada em vermelho vivo
+                                    # 🌟 ATUALIZADO: Rachura simples (/) em marrom (#8B4513) para padrão institucional
                                     dados["tis_wgs84"].to_crs(epsg=3857).plot(
-                                        ax=ax, facecolor='none', edgecolor='#ff3333', hatch='/', linewidth=1.0, alpha=0.8, zorder=2
+                                        ax=ax, facecolor='none', edgecolor='#8B4513', hatch='/', linewidth=1.0, alpha=0.8, zorder=2
+                                    )
                                     )
                                 if dados.get("riscos_wgs84") is not None and not dados["riscos_wgs84"].empty:
                                     # Padrão de micropontos (.) em amarelo, eliminando conflito de linhas
@@ -740,7 +741,8 @@ if st.session_state.dados_calculados is not None:
                                 if dados.get("ucs_wgs84") is not None and not dados["ucs_wgs84"].empty:
                                     itens_legenda.append(mpatches.Patch(facecolor='none', edgecolor='white', hatch='\\', label='Unidade de Conservação (Esparso)'))
                                 if dados.get("tis_wgs84") is not None and not dados["tis_wgs84"].empty:
-                                    itens_legenda.append(mpatches.Patch(facecolor='none', edgecolor='#ff3333', hatch='/', label='Terra Indígena (Esparso)'))
+                                    # 🌟 ATUALIZADO: Cor do box e texto alterados para Marrom
+                                    itens_legenda.append(mpatches.Patch(facecolor='none', edgecolor='#8B4513', hatch='/', label='Terra Indígena (Marrom)'))
                                 if dados.get("riscos_wgs84") is not None and not dados["riscos_wgs84"].empty:
                                     itens_legenda.append(mpatches.Patch(facecolor='none', edgecolor='#f1c40f', hatch='.', label='Área de Risco CPRM (Pontilhado)'))
                                 
