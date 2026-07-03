@@ -1,8 +1,8 @@
-name: Manter App Acordado
+name: Manter Apps Acordados
 on:
   schedule:
-    - cron: '0 */3 * * *' # Executa a cada 3 horas para garantir
-  workflow_dispatch:      # Permite forçar o teste manualmente se quiser
+    - cron: '0 */3 * * *' # Executa a cada 3 horas
+  workflow_dispatch:      # Permite que você force o teste manualmente
 
 jobs:
   ping:
@@ -18,22 +18,37 @@ jobs:
           npm install playwright
           npx playwright install chromium
 
-      - name: Simular Acesso Humano no ViaPrev
+      - name: Simular Acesso Humano nos Apps
         run: |
           node -e "
           const { chromium } = require('playwright');
           (async () => {
+            // Lista com as URLs dos seus dois ambientes
+            const urls = [
+              'https://viaprev.streamlit.app/',
+              'https://viaprev-teste.streamlit.app/'
+            ];
+            
             console.log('Iniciando o navegador...');
             const browser = await chromium.launch({ headless: true });
-            const page = await browser.newPage();
             
-            console.log('Acessando o app ViaPrev...');
-            await page.goto('https://viaprev.streamlit.app/', { waitUntil: 'networkidle', timeout: 60000 });
-            
-            console.log('Aguardando 10 segundos para firmar a conexão WebSocket...');
-            await new Promise(resolve => setTimeout(resolve, 10000)); 
+            for (const url of urls) {
+              const page = await browser.newPage();
+              try {
+                console.log('Acessando o app: ' + url);
+                await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
+                
+                console.log('Aguardando 10 segundos para firmar a conexão WebSocket...');
+                await new Promise(resolve => setTimeout(resolve, 10000)); 
+                console.log('Sucesso para: ' + url);
+              } catch (error) {
+                console.error('Erro ao acessar ' + url + ':', error.message);
+              } finally {
+                await page.close();
+              }
+            }
             
             await browser.close();
-            console.log('Sucesso! O cronômetro do Streamlit foi zerado.');
+            console.log('Todos os apps foram atualizados com sucesso!');
           })();
           "
