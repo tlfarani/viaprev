@@ -5,3 +5,6 @@ pyarrow
 networkx
 folium
 streamlit-folium
+matplotlib
+contextily
+reportlab
