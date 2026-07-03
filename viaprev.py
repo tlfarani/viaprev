@@ -565,6 +565,7 @@ if st.session_state.dados_calculados is not None:
                 }), use_container_width=True, hide_index=True)
             
             # 2. Área de inserção livre para coordenadas refinadas no QGIS
+            # 🌟 VERSÃO PROTEGIDA CONTRA ERROS DE LATITUDE/LONGITUDE OUTLIERS 🌟
             st.markdown("##### 📍 Pontos de Parada Específicos (Mapeamento Refinado)")
             st.caption("Cole abaixo os alvos identificados no QGIS (um por linha, no formato: **latitude, longitude, descrição**). O sistema ordenará e vinculará o trecho/score automaticamente.")
             
@@ -598,6 +599,14 @@ if st.session_state.dados_calculados is not None:
                             if "rota_unificada_m" not in dados:
                                 st.warning("⚠️ Por favor, clique em 'Calcular Rota' na barra lateral primeiro para calibrar o motor de ordenação.")
                                 st.stop()
+                                
+                            # 🌟 TRAVA DE SEGURANÇA SENSORIZADA 🌟
+                            # Calcula a distância perpendicular real do ponto até os trilhos em metros
+                            dist_real_trilhos_m = dados["rota_unificada_m"].distance(ponto_m)
+                            
+                            if dist_real_trilhos_m > 30000: # Se estiver a mais de 30 km de distância real da ferrovia
+                                st.error(f"❌ **Erro de Localização no alvo '{desc_f}':** Este ponto está localizado a {dist_real_trilhos_m/1000:.1f} km fora da rota ferroviária calculada! Verifique se você não esqueceu o sinal de menos (-) na Latitude.")
+                                continue # Pula este ponto corrompido para não quebrar o PDF e o Shapefile
                                 
                             distancia_linha = dados["rota_unificada_m"].project(ponto_m)
                             
