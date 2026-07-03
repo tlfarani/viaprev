@@ -1,0 +1,39 @@
+name: Manter App Acordado
+on:
+  schedule:
+    - cron: '0 */3 * * *' # Executa a cada 3 horas para garantir
+  workflow_dispatch:      # Permite forçar o teste manualmente se quiser
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Instalar Navegador Automatizado
+        run: |
+          npm install playwright
+          npx playwright install chromium
+
+      - name: Simular Acesso Humano no ViaPrev
+        run: |
+          node -e "
+          const { chromium } = require('playwright');
+          (async () => {
+            console.log('Iniciando o navegador...');
+            const browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage();
+            
+            console.log('Acessando o app ViaPrev...');
+            await page.goto('https://viaprev.streamlit.app/', { waitUntil: 'networkidle', timeout: 60000 });
+            
+            console.log('Aguardando 10 segundos para firmar a conexão WebSocket...');
+            await new Promise(resolve => setTimeout(resolve, 10000)); 
+            
+            await browser.close();
+            console.log('Sucesso! O cronômetro do Streamlit foi zerado.');
+          })();
+          "
