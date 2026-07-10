@@ -27,6 +27,9 @@ jobs:
             const urls = [
               'https://viaprev.streamlit.app/',
               'https://viaprev-teste.streamlit.app/'
+              'https://calcpei.streamlit.app/'
+              'https://promar.streamlit.app/'
+              'https://fiscflow.streamlit.app/'
             ];
             
             console.log('Iniciando o navegador...');
