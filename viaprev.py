@@ -26,11 +26,12 @@ if "dados_calculados" not in st.session_state:
 if "exibir_readme" not in st.session_state:
     st.session_state.exibir_readme = False
 
-# --- 2. CARREGAMENTO DOS DADOS NACIONAIS BASE ---
-@st.cache_data(show_spinner=False)
-def carregar_bases_nacionais():
-    sedes_municipios = geobr.read_municipal_seat()
-    estados_br = geobr.read_state() # Nova camada leve usada no cruzamento dinâmico de fronteiras
+# --- 2. CARREGAMENTO DOS DADOS NACIONAIS BASE ---                      
+@st.cache_data(show_spinner=False)                                      
+def carregar_bases_nacionais():                                         
+    # 🌟 CORRIGIDO: Forçando o ano de 2010 para satisfazer a nova versão do geobr
+    sedes_municipios = geobr.read_municipal_seat(year=2010)                      
+    estados_br = geobr.read_state(year=2020) # Nova camada leve usada no cruzamento dinâmico de fronteiras
     try:
         malha_ferroviaria = gpd.read_parquet("dados/malha_ferroviaria.parquet")
         if malha_ferroviaria.crs is None:
