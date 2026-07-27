@@ -30,6 +30,8 @@ jobs:
               'https://calcpei.streamlit.app/',
               'https://promar.streamlit.app/',
               'https://fiscflow.streamlit.app/'
+              'https://plataformas-ibama.streamlit.app/'
+              'https://plataformas-teste.streamlit.app/'
             ];
             
             console.log('Iniciando o navegador...');
